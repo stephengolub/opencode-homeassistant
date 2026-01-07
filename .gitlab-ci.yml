@@ -1,0 +1,132 @@
+# OpenCode Plugin - GitLab CI Pipeline
+# TypeScript plugin for Home Assistant integration via MQTT
+
+stages:
+  - validate
+  - test
+  - build
+  - release
+
+variables:
+  NODE_VERSION: "20"
+
+default:
+  image: node:${NODE_VERSION}-alpine
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - node_modules/
+    policy: pull-push
+
+# Install dependencies - shared setup
+.npm-install:
+  before_script:
+    - npm ci
+
+# Validate stage
+lint:
+  stage: validate
+  extends: .npm-install
+  script:
+    - npm run build -- --noEmit
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+typecheck:
+  stage: validate
+  extends: .npm-install
+  script:
+    - npx tsc --noEmit
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Test stage
+test:
+  stage: test
+  extends: .npm-install
+  script:
+    - npm test
+  coverage: '/All files[^|]*\|[^|]*\s+([\d\.]+)/'
+  artifacts:
+    when: always
+    reports:
+      junit: junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+    paths:
+      - coverage/
+    expire_in: 7 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+test:coverage:
+  stage: test
+  extends: .npm-install
+  script:
+    - npm run test:coverage
+  coverage: '/All files[^|]*\|[^|]*\s+([\d\.]+)/'
+  artifacts:
+    when: always
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+    paths:
+      - coverage/
+    expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Build stage
+build:
+  stage: build
+  extends: .npm-install
+  script:
+    - npm run build
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 7 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# Release stage - publish to npm on tags
+publish:
+  stage: release
+  extends: .npm-install
+  script:
+    - echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+    - npm run build
+    - npm publish --access public
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+  environment:
+    name: npm
+    url: https://www.npmjs.com/package/ha-opencode
+
+# Create GitLab release on tags
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  script:
+    - echo "Creating release for ${CI_COMMIT_TAG}"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: "Release $CI_COMMIT_TAG"
+    description: |
+      ## OpenCode Plugin ${CI_COMMIT_TAG}
+      
+      Install via npm:
+      ```bash
+      npm install ha-opencode@${CI_COMMIT_TAG#v}
+      ```
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
