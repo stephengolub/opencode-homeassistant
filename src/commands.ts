@@ -133,11 +133,13 @@ export class CommandHandler {
       return;
     }
 
-    // Trigger Kitty terminal alert for incoming command
-    notify(
-      "HA Command Received",
-      `Command: ${command.command}`
-    );
+    // Trigger Kitty terminal alert for incoming command (skip noisy history requests)
+    if (!["get_history", "get_history_since", "get_agents"].includes(command.command)) {
+      notify(
+        "HA Command Received",
+        `Command: ${command.command}`
+      );
+    }
 
     // Handle command asynchronously
     this.processCommand(command).catch((err) => {
@@ -242,10 +244,9 @@ export class CommandHandler {
       };
 
       await this.mqtt.publish(this.discovery.getResponseTopic(), response, false);
-      notify("Agents Sent", `${agents.length} agents`);
+      // Skip notification - agents requests are frequent and noisy
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : "Unknown error";
-      notify("Agents Failed", errorMsg);
+      // Only log, don't notify - agents requests are frequent
       console.error("[ha-opencode] Failed to fetch agents:", err);
     }
   }
@@ -254,7 +255,8 @@ export class CommandHandler {
     const sessionId = command.session_id || this.state.getCurrentSessionId();
 
     if (!sessionId) {
-      notify("History Error", "No active session");
+      // Skip notification - history requests are frequent and noisy
+      console.warn("[ha-opencode] History request with no active session");
       return;
     }
 
@@ -270,10 +272,9 @@ export class CommandHandler {
       };
 
       await this.mqtt.publish(this.discovery.getResponseTopic(), response, false);
-      notify("History Sent", `${history.messages.length} messages`);
+      // Skip notification - history requests are frequent and noisy
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : "Unknown error";
-      notify("History Failed", errorMsg);
+      // Only log, don't notify - history requests are frequent
       console.error("[ha-opencode] Failed to fetch history:", err);
     }
   }
@@ -282,18 +283,19 @@ export class CommandHandler {
     const sessionId = command.session_id || this.state.getCurrentSessionId();
 
     if (!sessionId) {
-      notify("History Error", "No active session");
+      // Skip notification - history requests are frequent and noisy
+      console.warn("[ha-opencode] History since request with no active session");
       return;
     }
 
     if (!command.since) {
-      notify("History Error", "Missing 'since' timestamp");
+      console.warn("[ha-opencode] History since request missing 'since' timestamp");
       return;
     }
 
     const sinceDate = new Date(command.since);
     if (isNaN(sinceDate.getTime())) {
-      notify("History Error", "Invalid 'since' timestamp");
+      console.warn("[ha-opencode] History since request with invalid 'since' timestamp:", command.since);
       return;
     }
 
@@ -310,10 +312,9 @@ export class CommandHandler {
       };
 
       await this.mqtt.publish(this.discovery.getResponseTopic(), response, false);
-      notify("History Sent", `${history.messages.length} messages since ${sinceDate.toLocaleTimeString()}`);
+      // Skip notification - history requests are frequent and noisy
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : "Unknown error";
-      notify("History Failed", errorMsg);
+      // Only log, don't notify - history requests are frequent
       console.error("[ha-opencode] Failed to fetch history:", err);
     }
   }

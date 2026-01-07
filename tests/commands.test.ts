@@ -479,14 +479,20 @@ describe("CommandHandler", () => {
 
       const { notify } = await import("../src/notify.js");
 
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
       messageCallback(
         "opencode/opencode_test/command",
         JSON.stringify({ command: "get_history" })
       );
 
       await vi.waitFor(() => {
-        expect(notify).toHaveBeenCalledWith("History Error", "No active session");
+        expect(consoleSpy).toHaveBeenCalledWith("[ha-opencode] History request with no active session");
       });
+
+      // Should NOT send a notification (history requests are silent)
+      expect(notify).not.toHaveBeenCalledWith("History Error", expect.any(String));
+      consoleSpy.mockRestore();
     });
   });
 
@@ -551,6 +557,7 @@ describe("CommandHandler", () => {
 
     it("should reject missing since timestamp", async () => {
       const { notify } = await import("../src/notify.js");
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
       messageCallback(
         "opencode/opencode_test/command",
@@ -558,12 +565,17 @@ describe("CommandHandler", () => {
       );
 
       await vi.waitFor(() => {
-        expect(notify).toHaveBeenCalledWith("History Error", "Missing 'since' timestamp");
+        expect(consoleSpy).toHaveBeenCalledWith("[ha-opencode] History since request missing 'since' timestamp");
       });
+
+      // Should NOT send a notification (history requests are silent)
+      expect(notify).not.toHaveBeenCalledWith("History Error", expect.any(String));
+      consoleSpy.mockRestore();
     });
 
     it("should reject invalid since timestamp", async () => {
       const { notify } = await import("../src/notify.js");
+      const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
       messageCallback(
         "opencode/opencode_test/command",
@@ -571,8 +583,12 @@ describe("CommandHandler", () => {
       );
 
       await vi.waitFor(() => {
-        expect(notify).toHaveBeenCalledWith("History Error", "Invalid 'since' timestamp");
+        expect(consoleSpy).toHaveBeenCalledWith("[ha-opencode] History since request with invalid 'since' timestamp:", "not-a-date");
       });
+
+      // Should NOT send a notification (history requests are silent)
+      expect(notify).not.toHaveBeenCalledWith("History Error", expect.any(String));
+      consoleSpy.mockRestore();
     });
   });
 
@@ -772,8 +788,14 @@ describe("CommandHandler", () => {
       );
 
       await vi.waitFor(() => {
-        expect(notify).toHaveBeenCalledWith("History Failed", "Session not found");
+        // Should log the error but NOT send a notification (history requests are silent)
+        expect(consoleSpy).toHaveBeenCalledWith(
+          "[ha-opencode] Failed to fetch history:",
+          expect.any(Error)
+        );
       });
+
+      expect(notify).not.toHaveBeenCalledWith("History Failed", expect.any(String));
       consoleSpy.mockRestore();
     });
 
