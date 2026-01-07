@@ -276,55 +276,65 @@ ha-opencode/                    # This repo (OpenCode plugin)
 
 ### Target Structure (After Split)
 
-**Plugin repo** (`opencode-homeassistant` or `ha-opencode`):
+**Plugin repo** (`opencode-home-assistant/opencode-plugin`):
 ```
-ha-opencode/
+opencode-plugin/
 ├── src/
 ├── blueprints/
 ├── package.json
 └── README.md
 ```
 
-**Card repo** (`lovelace-opencode-card`):
+**Card repo** (`opencode-home-assistant/opencode-card`):
 ```
-lovelace-opencode-card/
+opencode-card/
 ├── src/opencode-card.ts
 ├── dist/opencode-card.js
 ├── hacs.json
 ├── LICENSE
 ├── package.json
 ├── README.md
-└── .github/workflows/release.yml   # Add during extraction
+└── .gitlab-ci.yml              # Add during extraction
 ```
 
 ### Extraction Steps
 
 When ready to split:
 
-1. Create new repo `lovelace-opencode-card` on GitHub
+1. Card repo already exists at `gitlab.com/opencode-home-assistant/opencode-card`
 2. Copy contents of `ha-card/` to new repo root
-3. Add GitHub Actions workflow for releases:
+3. Add GitLab CI workflow for releases (`.gitlab-ci.yml`):
    ```yaml
-   name: Release
-   on:
+   stages:
+     - build
+     - release
+
+   build:
+     stage: build
+     image: node:20
+     script:
+       - npm ci
+       - npm run build
+     artifacts:
+       paths:
+         - dist/opencode-card.js
+
+   release:
+     stage: release
+     image: registry.gitlab.com/gitlab-org/release-cli:latest
+     rules:
+       - if: $CI_COMMIT_TAG
+     script:
+       - echo "Creating release for $CI_COMMIT_TAG"
      release:
-       types: [published]
-   jobs:
-     build:
-       runs-on: ubuntu-latest
-       steps:
-         - uses: actions/checkout@v4
-         - uses: actions/setup-node@v4
-         - run: npm ci && npm run build
-         - name: Upload release asset
-           uses: actions/upload-release-asset@v1
-           with:
-             upload_url: ${{ github.event.release.upload_url }}
-             asset_path: ./dist/opencode-card.js
-             asset_name: opencode-card.js
-             asset_content_type: application/javascript
+       tag_name: $CI_COMMIT_TAG
+       description: "Release $CI_COMMIT_TAG"
+       assets:
+         links:
+           - name: opencode-card.js
+             url: "${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/raw/dist/opencode-card.js?job=build"
    ```
-4. Create initial release
+4. Create initial release by tagging a commit
 5. Remove `ha-card/` from this repo
 6. Update this repo's README to link to card repo
 7. (Optional) Submit card repo to HACS default repositories

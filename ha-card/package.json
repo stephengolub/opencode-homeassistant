@@ -5,11 +5,11 @@
   "main": "dist/opencode-card.js",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/stephengolub/lovelace-opencode-card.git"
+    "url": "git+https://gitlab.com/opencode-home-assistant/opencode-card.git"
   },
-  "homepage": "https://github.com/stephengolub/lovelace-opencode-card#readme",
+  "homepage": "https://gitlab.com/opencode-home-assistant/opencode-card#readme",
   "bugs": {
-    "url": "https://github.com/stephengolub/lovelace-opencode-card/issues"
+    "url": "https://gitlab.com/opencode-home-assistant/opencode-card/-/issues"
   },
   "keywords": [
     "home-assistant",

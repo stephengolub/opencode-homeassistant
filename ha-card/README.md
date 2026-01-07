@@ -25,13 +25,13 @@ A custom Lovelace card that displays OpenCode AI coding assistant sessions and a
 1. Open HACS in Home Assistant
 2. Go to "Frontend" section
 3. Click the three dots menu > "Custom repositories"
-4. Add `https://github.com/stephengolub/lovelace-opencode-card` as "Lovelace"
+4. Add `https://gitlab.com/opencode-home-assistant/opencode-card` as "Lovelace"
 5. Search for "OpenCode Card" and install
 6. Refresh your browser
 
 ### Manual Installation
 
-1. Download `opencode-card.js` from the [latest release](https://github.com/stephengolub/lovelace-opencode-card/releases)
+1. Download `opencode-card.js` from the [latest release](https://gitlab.com/opencode-home-assistant/opencode-card/-/releases)
 
 2. Copy to your Home Assistant `www` folder:
    ```bash
@@ -119,7 +119,7 @@ npm run dev
 
 ## Related Projects
 
-- [ha-opencode](https://github.com/stephengolub/opencode-homeassistant) - OpenCode plugin for Home Assistant integration (required)
+- [opencode-plugin](https://gitlab.com/opencode-home-assistant/opencode-plugin) - OpenCode plugin for Home Assistant integration (required)
 - [OpenCode](https://opencode.ai) - AI coding assistant
 
 ## Troubleshooting
