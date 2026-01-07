@@ -141,14 +141,21 @@ pages:
     # This preserves previously deployed versions
     - |
       if curl -sf "https://opencode-home-assistant.gitlab.io/opencode-plugin/versions.json" -o existing_versions.json 2>/dev/null; then
-        echo "Found existing versions.json"
-        # Download each existing version
-        for version in $(jq -r '.[] | select(.version != "latest") | .version' existing_versions.json); do
-          echo "Fetching existing version: $version"
-          mkdir -p "public/$version"
-          curl -sf "https://opencode-home-assistant.gitlab.io/opencode-plugin/$version/index.html" -o "public/$version/index.html" 2>/dev/null || true
-          # We can't easily fetch all files, so versioned docs will need to be rebuilt on release
-        done
+        echo "Found existing versions.json, checking if valid JSON..."
+        if jq empty existing_versions.json 2>/dev/null; then
+          echo "Valid JSON, processing versions..."
+          for version in $(jq -r '.[] | select(.version != "latest") | .version' existing_versions.json 2>/dev/null || echo ""); do
+            if [ -n "$version" ]; then
+              echo "Fetching existing version: $version"
+              mkdir -p "public/$version"
+              curl -sf "https://opencode-home-assistant.gitlab.io/opencode-plugin/$version/index.html" -o "public/$version/index.html" 2>/dev/null || true
+            fi
+          done
+        else
+          echo "Invalid JSON in versions.json, ignoring..."
+        fi
+      else
+        echo "No existing versions.json found, starting fresh"
       fi
     
     # Create versions.json for version selector
@@ -206,8 +213,20 @@ pages:release:
     
     # Try to fetch and merge with existing versions.json
     - |
+      VALID_EXISTING=false
       if curl -sf "https://opencode-home-assistant.gitlab.io/opencode-plugin/versions.json" -o existing_versions.json 2>/dev/null; then
-        echo "Found existing versions.json"
+        echo "Found existing versions.json, checking if valid JSON..."
+        if jq empty existing_versions.json 2>/dev/null; then
+          echo "Valid JSON"
+          VALID_EXISTING=true
+        else
+          echo "Invalid JSON in versions.json, starting fresh"
+        fi
+      else
+        echo "No existing versions.json found"
+      fi
+      
+      if [ "$VALID_EXISTING" = true ]; then
         # Add new version if not already present
         if ! jq -e ".[] | select(.version == \"$MAJOR_MINOR\")" existing_versions.json > /dev/null 2>&1; then
           jq ". + [{\"version\": \"$MAJOR_MINOR\", \"title\": \"$MAJOR_MINOR\", \"aliases\": []}]" existing_versions.json > public/versions.json
