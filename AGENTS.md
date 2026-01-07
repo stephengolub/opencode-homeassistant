@@ -47,48 +47,89 @@ Environment variables take precedence over JSON config.
 ## Architecture
 
 ```
-index.ts          Plugin entry point, wires up all components, handles shutdown
+index.ts          Plugin entry point, defers session setup until first event
     ↓
 config.ts         Loads MQTT/HA config from environment variables and JSON
-mqtt.ts           MQTT client wrapper with pub/sub and reconnection
-discovery.ts      Home Assistant MQTT Discovery - registers device and entities
+mqtt.ts           MQTT client wrapper with pub/sub, wildcard support, and reconnection
+discovery.ts      Home Assistant MQTT Discovery - session-based device registration
 state.ts          Maps OpenCode events to HA entity state updates
-commands.ts       Handles incoming MQTT commands (permission responses, prompts, history)
+commands.ts       Handles incoming MQTT commands (permissions, prompts, history, cleanup)
+cleanup.ts        Removes stale session entities from Home Assistant
 notify.ts         Cross-platform terminal notification utilities (Kitty OSC 99)
 ```
 
 **Data Flow:**
-1. Plugin initializes on OpenCode startup, connects to MQTT
-2. Device registration is **deferred** until a valid session title is received
-3. `StateTracker` listens to OpenCode events via the `event` hook
-4. When `hasValidSession()` becomes true, `Discovery` registers the device with HA
-5. `CommandHandler` subscribes to command topic and processes commands via OpenCode client API
-6. On shutdown (SIGINT/SIGTERM), plugin unregisters device from HA
+1. Plugin initializes on OpenCode startup, connects to MQTT (without LWT)
+2. Background cleanup runs to remove stale sessions (>7 days inactive)
+3. On first `session.created` event, plugin extracts session ID
+4. `Discovery` is created with session ID → registers device with HA
+5. `StateTracker` publishes initial state and subscribes to events
+6. When session title becomes valid, `updateDeviceName()` updates HA device friendly name
+7. `CommandHandler` subscribes to command topic and processes commands
+8. On shutdown (SIGINT/SIGTERM), plugin unregisters device from HA
+
+**Session-Based Identity:**
+
+Each OpenCode session gets its own HA device and entities, identified by session ID:
+- Session ID format: `ses_46b09b89bffevq6HeMNIkuvk4B`
+- Device ID: `opencode_46b09b89bffevq6HeMNIkuvk4B` (strips `ses_` prefix)
+- Initial device name: `OpenCode - {projectName} - Untitled`
+- After title available: `OpenCode - {projectName} - {sessionTitle}`
+
+This allows running multiple concurrent OpenCode sessions in the same directory.
 
 **MQTT Topics:**
-- Discovery: `homeassistant/sensor/opencode_{id}/{entity}/config`
-- State: `opencode/opencode_{id}/{entity}`
-- Attributes: `opencode/opencode_{id}/{entity}/attributes`
-- Commands: `opencode/opencode_{id}/command`
-- Response: `opencode/opencode_{id}/response`
+```
+# For session ses_46b09b89bffevq6HeMNIkuvk4B:
+
+# State topics
+opencode/opencode_46b09b89bffevq6HeMNIkuvk4B/state
+opencode/opencode_46b09b89bffevq6HeMNIkuvk4B/state/attributes
+opencode/opencode_46b09b89bffevq6HeMNIkuvk4B/session_title
+opencode/opencode_46b09b89bffevq6HeMNIkuvk4B/model
+opencode/opencode_46b09b89bffevq6HeMNIkuvk4B/availability
+
+# Commands & responses
+opencode/opencode_46b09b89bffevq6HeMNIkuvk4B/command
+opencode/opencode_46b09b89bffevq6HeMNIkuvk4B/response
+
+# HA Discovery
+homeassistant/sensor/opencode_46b09b89bffevq6HeMNIkuvk4B/state/config
+
+# Global cleanup response
+opencode/cleanup/response
+```
 
 **Key Types:**
 - `EntityKey` - union of all entity keys (state, session_title, model, etc.)
 - `PermissionInfo` - permission request details published as attributes
-- `MqttWrapper` - interface for MQTT operations (publish, subscribe, close)
+- `MqttWrapper` - interface for MQTT operations (publish, subscribe, unsubscribe, close)
 - `TrackedState` - internal state object with all tracked session properties
+- `CleanupConfig` - configuration for stale session cleanup
 
 ## Key Implementation Details
 
-### Deferred Device Registration
+### Session-Based Device Registration
 
-The plugin waits until it has a valid session before registering with Home Assistant. This prevents creating entities with "unknown" in the name.
+The plugin creates a unique HA device per OpenCode session:
 
-**Valid session criteria** (see `hasValidSession()` in state.ts):
-- Session title is not empty
-- Session title is not "No active session"
-- Session title is not "Untitled"
-- Session title is not "unknown"
+1. Wait for first `session.created` event to get session ID
+2. Create `Discovery` with session ID + project name
+3. Register device immediately with initial name: `OpenCode - {project} - Untitled`
+4. When valid session title arrives, call `updateDeviceName(title)` to update friendly name
+5. Entity `unique_id` stays constant (based on session ID), only display name changes
+
+### Device Name Updates
+
+The device friendly name updates when a valid session title is received:
+- Initial: `OpenCode - my-project - Untitled`
+- After title: `OpenCode - my-project - Implementing feature X`
+
+Valid title criteria (see `hasValidTitle()` in state.ts):
+- Not empty
+- Not "No active session"
+- Not "Untitled"
+- Not "unknown" (case-insensitive)
 
 ### State Attributes
 
@@ -97,10 +138,48 @@ The `state` entity publishes these attributes:
 - `agent` - primary agent from user message
 - `current_agent` - sub-agent from AgentPart (e.g., "explore", "general")
 - `hostname` - machine hostname
+- `error_message` - error details when in error state
+
+The `device_id` entity publishes these attributes:
+- `command_topic` - topic to send commands
+- `response_topic` - topic for command responses
+- `state_topic_base` - base path for all state topics
+- `device_name` - current device friendly name
+- `session_id` - full session ID (e.g., `ses_46b09b89bffevq6HeMNIkuvk4B`)
+- `project_name` - project directory name
 
 ### Publish Order for Automations
 
 When state changes, attributes are published BEFORE the state value. This ensures that when HA automation triggers on the state MQTT topic, the `previous_state` attribute is already available.
+
+### Stale Session Cleanup
+
+Sessions that haven't been active for 7 days are automatically cleaned up:
+
+**Automatic cleanup:**
+- Runs on every plugin startup (async, non-blocking)
+- Subscribes to `opencode/+/last_activity` to discover all sessions
+- Removes sessions where `last_activity` is older than 7 days
+- Publishes empty configs to remove entities from HA
+
+**Manual cleanup via MQTT command:**
+```json
+{
+  "command": "cleanup_stale_sessions",
+  "max_age_days": 7
+}
+```
+
+Response published to `opencode/cleanup/response`:
+```json
+{
+  "type": "cleanup_result",
+  "sessions_removed": 3,
+  "session_ids": ["opencode_abc123...", "opencode_def456..."],
+  "max_age_days": 7,
+  "timestamp": "2025-01-07T12:00:00Z"
+}
+```
 
 ### Graceful Shutdown
 
@@ -112,10 +191,10 @@ Plugin registers handlers for SIGINT and SIGTERM to:
 ### Availability Tracking
 
 Entities are automatically marked as unavailable when the plugin disconnects:
-- Uses MQTT Last Will and Testament (LWT) for crash detection
 - Availability topic: `opencode/{deviceId}/availability`
 - Payloads: "online" when connected, "offline" when disconnected
-- Broker automatically publishes "offline" if connection drops unexpectedly
+
+Note: LWT (Last Will and Testament) is not configured until a session is established, so crash detection only works after the first session event.
 
 ## Testing
 
@@ -156,26 +235,21 @@ npm run build
 
 ## Common Issues
 
-### Entity ID contains "unknown"
-- The session title wasn't set before device registration
-- Fixed by deferring registration until `hasValidSession()` returns true
+### Too many entities in HA
+- Each session creates a new set of entities
+- Use the cleanup command or automatic cleanup to remove old sessions
+- Sessions inactive for 7+ days are automatically removed on plugin startup
 
 ### Automation not triggering
 - Check that `previous_state` attribute is available when state changes
-- Attributes are now published BEFORE state value
+- Attributes are published BEFORE state value
 - Use the robust entity lookup pattern (by `state_topic_base` attribute)
+
+### Entity naming shows "Untitled"
+- This is the initial name before session title is available
+- Once the session gets a proper title, the device name updates automatically
+- The entity `unique_id` remains constant (based on session ID)
 
 ### Kitty notifications not working
 - Ensure terminal supports OSC 99 (Kitty, iTerm2)
 - Check that stdout is a TTY
-
-## Future Enhancements
-
-### Multiple Session Support
-Currently, the plugin tracks one session at a time per project. When switching sessions, the state updates to reflect the new active session. 
-
-Potential enhancement: Track multiple concurrent sessions as separate HA devices or as a list attribute on the main device. This would require:
-- Tracking a `Map<sessionId, SessionState>` instead of a single `TrackedState`
-- Either creating dynamic entities per session, or publishing a sessions list attribute
-- Handling session lifecycle (create, switch, delete) events
-- Consider HA entity limits and cleanup when sessions are deleted

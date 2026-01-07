@@ -1,23 +1,35 @@
-import type { Project } from "@opencode-ai/sdk";
 import type { MqttWrapper, MqttWillConfig } from "./mqtt.js";
 import type { HaConfig } from "./config.js";
+
+/**
+ * Extract the unique portion of a session ID by stripping the "ses_" prefix.
+ */
+export function extractSessionIdPart(sessionId: string): string {
+  return sessionId.replace(/^ses_/, "");
+}
+
+/**
+ * Generate device ID from session ID.
+ */
+export function getDeviceIdForSession(sessionId: string): string {
+  return `opencode_${extractSessionIdPart(sessionId)}`;
+}
 
 /**
  * Generate the availability topic for LWT configuration.
  * This can be called before Discovery is instantiated.
  */
-export function getAvailabilityTopicForProject(project: Project): string {
-  const projectName = project.worktree.split("/").pop() || "unknown";
-  const deviceId = `opencode_${projectName.replace(/[^a-zA-Z0-9_-]/g, "_").toLowerCase()}`;
+export function getAvailabilityTopicForSession(sessionId: string): string {
+  const deviceId = getDeviceIdForSession(sessionId);
   return `opencode/${deviceId}/availability`;
 }
 
 /**
  * Create MQTT LWT (Last Will and Testament) config for availability tracking.
  */
-export function createWillConfig(project: Project): MqttWillConfig {
+export function createWillConfig(sessionId: string): MqttWillConfig {
   return {
-    topic: getAvailabilityTopicForProject(project),
+    topic: getAvailabilityTopicForSession(sessionId),
     payload: "offline",
     retain: true,
   };
@@ -127,33 +139,45 @@ export class Discovery {
   private readonly mqtt: MqttWrapper;
   private readonly haConfig: HaConfig;
   readonly deviceId: string;
-  private readonly device: DeviceInfo;
+  private device: DeviceInfo;
   private readonly stateTopicBase: string;
+  private readonly sessionId: string;
+  private readonly projectName: string;
 
-  constructor(mqtt: MqttWrapper, haConfig: HaConfig, project: Project) {
+  constructor(
+    mqtt: MqttWrapper,
+    haConfig: HaConfig,
+    sessionId: string,
+    projectName: string
+  ) {
     this.mqtt = mqtt;
     this.haConfig = haConfig;
+    this.sessionId = sessionId;
+    this.projectName = projectName;
 
-    // Extract project name from worktree path (e.g., "/Users/foo/code/myproject" -> "myproject")
-    const projectName = project.worktree.split("/").pop() || "unknown";
-    
-    // Create a stable device ID from project name (derived from worktree path)
-    // This is more reliable than project.id which may be a UUID or empty
-    this.deviceId = `opencode_${this.sanitizeId(projectName)}`;
+    // Create device ID from session ID (strip ses_ prefix, use full remaining ID)
+    this.deviceId = getDeviceIdForSession(sessionId);
 
+    // Initial device name uses project name with "Untitled" placeholder
     this.device = {
       identifiers: [this.deviceId],
-      name: `OpenCode - ${projectName}`,
+      name: `OpenCode - ${projectName} - Untitled`,
       manufacturer: "OpenCode",
       model: "AI Coding Assistant",
-      sw_version: project.id || projectName,
+      sw_version: sessionId,
     };
 
     this.stateTopicBase = `opencode/${this.deviceId}`;
   }
 
-  private sanitizeId(id: string): string {
-    return id.replace(/[^a-zA-Z0-9_-]/g, "_").toLowerCase();
+  /**
+   * Update the device friendly name when session title becomes available.
+   * This re-publishes all entity configs with the updated device name.
+   */
+  async updateDeviceName(title: string): Promise<void> {
+    this.device.name = `OpenCode - ${this.projectName} - ${title}`;
+    // Re-register all entities with updated device info
+    await this.registerDevice();
   }
 
   async registerDevice(): Promise<void> {
@@ -162,7 +186,9 @@ export class Discovery {
     }
   }
 
-  private async registerEntity(entity: (typeof ENTITY_DEFINITIONS)[number]): Promise<void> {
+  private async registerEntity(
+    entity: (typeof ENTITY_DEFINITIONS)[number]
+  ): Promise<void> {
     const uniqueId = `${this.deviceId}_${entity.key}`;
     const configTopic = `${this.haConfig.discoveryPrefix}/sensor/${this.deviceId}/${entity.key}/config`;
 
@@ -242,7 +268,10 @@ export class Discovery {
     await this.mqtt.publish(topic, payload, true);
   }
 
-  async publishAttributes(key: EntityKey, attributes: Record<string, unknown>): Promise<void> {
+  async publishAttributes(
+    key: EntityKey,
+    attributes: Record<string, unknown>
+  ): Promise<void> {
     const topic = this.getAttributesTopic(key);
     await this.mqtt.publish(topic, attributes, true);
   }
@@ -254,6 +283,8 @@ export class Discovery {
       response_topic: this.getResponseTopic(),
       state_topic_base: this.stateTopicBase,
       device_name: this.device.name,
+      session_id: this.sessionId,
+      project_name: this.projectName,
     });
   }
 
@@ -289,5 +320,12 @@ export class Discovery {
       const configTopic = `${this.haConfig.discoveryPrefix}/sensor/${this.deviceId}/${entity.key}/config`;
       await this.mqtt.publish(configTopic, "", true);
     }
+  }
+
+  /**
+   * Get the list of all entity keys for cleanup purposes.
+   */
+  static getEntityKeys(): readonly EntityKey[] {
+    return ENTITY_DEFINITIONS.map((e) => e.key);
   }
 }

@@ -85,183 +85,58 @@ The OpenCode plugin creates these entities per session:
 
 ## Automations
 
-### Mobile Notifications for State Changes
+### Using Blueprints (Recommended)
 
-Send notifications to your mobile device when any OpenCode session needs attention or completes work. This automation triggers directly on MQTT messages for efficiency, avoiding noisy state change events.
+The easiest way to set up OpenCode notifications is using the provided automation blueprints. These work with both **iOS** and **Android** devices via the Home Assistant Companion app.
 
-**Prerequisites:** You must have the MQTT integration configured and subscribe to the OpenCode topics. Add this to your `configuration.yaml`:
+#### Installation
 
-```yaml
-mqtt:
-  sensor:
-    # This enables receiving MQTT messages for automation triggers
-    # The actual OpenCode entities are auto-discovered, this just enables the trigger
-```
+1. Copy the blueprint files to your Home Assistant config:
+   ```bash
+   # From the ha-opencode directory
+   cp blueprints/*.yaml /config/blueprints/automation/opencode/
+   ```
 
-```yaml
-automation:
-  - alias: "OpenCode State Notifications"
-    description: "Notify when any OpenCode session needs attention or completes work"
-    triggers:
-      - platform: mqtt
-        topic: "opencode/+/state"
-    variables:
-      # Extract the state topic base from the trigger (e.g., "opencode/opencode_abc123")
-      state_topic_base: "{{ trigger.topic | replace('/state', '') }}"
-      # Find the device_id entity that has this state_topic_base in its attributes
-      # This is more robust than parsing the topic path to build entity IDs
-      device_id_entity: >
-        {{ states.sensor | selectattr('attributes.state_topic_base', 'defined')
-           | selectattr('attributes.state_topic_base', 'eq', state_topic_base)
-           | map(attribute='entity_id') | first | default('') }}
-      # Derive other entity IDs from the device_id entity (replace _device_id suffix)
-      entity_base: "{{ device_id_entity | replace('_device_id', '') }}"
-      state_entity: "{{ entity_base }}_state"
-      permission_entity: "{{ entity_base }}_permission"
-      session_entity: "{{ entity_base }}_session_title"
-      # Get values from entities
-      previous_state: "{{ state_attr(state_entity, 'previous_state') }}"
-      project_name: "{{ state_attr(device_id_entity, 'device_name') | default('OpenCode') }}"
-      command_topic: "{{ state_attr(device_id_entity, 'command_topic') }}"
-      # Device ID for notification tags
-      device_id: "{{ states(device_id_entity) }}"
-    condition:
-      - condition: template
-        value_template: >
-          {{ device_id_entity != ''
-             and trigger.payload in ['idle', 'waiting_permission', 'error']
-             and previous_state == 'working' }}
-    action:
-      - choose:
-          # Permission Required
-          - conditions:
-              - condition: template
-                value_template: "{{ trigger.payload == 'waiting_permission' }}"
-            sequence:
-              # Small delay to let permission attributes arrive
-              - delay:
-                  milliseconds: 500
-              - service: notify.mobile_app_your_phone
-                data:
-                  title: "OpenCode: Permission Required"
-                  message: "{{ state_attr(permission_entity, 'title') | default('Permission needed') }}"
-                  data:
-                    tag: "opencode-permission-{{ device_id }}"
-                    channel: "OpenCode"
-                    importance: high
-                    clickAction: "/lovelace/opencode"
-                    actions:
-                      - action: "OPENCODE_APPROVE_{{ device_id }}"
-                        title: "Approve"
-                      - action: "OPENCODE_REJECT_{{ device_id }}"
-                        title: "Reject"
-                    # Pass data needed for permission response
-                    data:
-                      device_id: "{{ device_id }}"
-                      permission_id: "{{ state_attr(permission_entity, 'permission_id') }}"
-                      command_topic: "{{ command_topic }}"
+   Or create the files manually in Home Assistant:
+   - Go to **Settings > Automations & Scenes > Blueprints**
+   - Click **Import Blueprint** (or create manually)
 
-          # Error Occurred
-          - conditions:
-              - condition: template
-                value_template: "{{ trigger.payload == 'error' }}"
-            sequence:
-              - service: notify.mobile_app_your_phone
-                data:
-                  title: "OpenCode: Error"
-                  message: "{{ project_name }}: An error occurred"
-                  data:
-                    tag: "opencode-error-{{ device_id }}"
-                    channel: "OpenCode"
-                    importance: high
+2. Create automations from the blueprints:
+   - Go to **Settings > Automations & Scenes > Create Automation**
+   - Click **Use Blueprint**
+   - Select **OpenCode State Notifications**
+   - Choose your mobile device
+   - Save
 
-          # Work Complete (idle after working)
-          - conditions:
-              - condition: template
-                value_template: "{{ trigger.payload == 'idle' }}"
-            sequence:
-              - service: notify.mobile_app_your_phone
-                data:
-                  title: "OpenCode: Task Complete"
-                  message: "{{ project_name }}: {{ states(session_entity) }}"
-                  data:
-                    tag: "opencode-complete-{{ device_id }}"
-                    channel: "OpenCode"
+3. Create the permission response handler:
+   - Create another automation from **OpenCode Permission Response Handler**
+   - No configuration needed - just save it
 
-  # Handle notification actions for permission response
-  - alias: "OpenCode Permission Response from Notification"
-    description: "Handle approve/reject actions from mobile notifications"
-    trigger:
-      - platform: event
-        event_type: mobile_app_notification_action
-    condition:
-      - condition: template
-        value_template: >
-          {{ trigger.event.data.action is defined and
-             (trigger.event.data.action.startswith('OPENCODE_APPROVE_') or
-              trigger.event.data.action.startswith('OPENCODE_REJECT_')) }}
-    variables:
-      is_approve: "{{ trigger.event.data.action.startswith('OPENCODE_APPROVE_') }}"
-      response: "{{ 'once' if is_approve else 'reject' }}"
-      # Get data passed from the notification
-      command_topic: "{{ trigger.event.data.data.command_topic }}"
-      permission_id: "{{ trigger.event.data.data.permission_id }}"
-    action:
-      - service: mqtt.publish
-        data:
-          topic: "{{ command_topic }}"
-          payload: >
-            {"command": "permission_response", "permission_id": "{{ permission_id }}", "response": "{{ response }}"}
-```
+#### Available Blueprints
 
-### Alternative: Permission-Specific MQTT Trigger
+| Blueprint | Description |
+|-----------|-------------|
+| `opencode_state_notifications.yaml` | Sends notifications for task complete, permission required, and errors |
+| `opencode_permission_response.yaml` | Handles approve/reject button taps from notifications |
 
-For permission notifications specifically, you can trigger directly on the permission topic for faster response:
+#### Blueprint Options
 
-```yaml
-automation:
-  - alias: "OpenCode Permission Notification (Direct MQTT)"
-    description: "Notify immediately when permission is requested via MQTT"
-    trigger:
-      - platform: mqtt
-        topic: "opencode/+/permission"
-        payload: "pending"
-    variables:
-      # Extract state topic base and find matching device_id entity
-      state_topic_base: "{{ trigger.topic | replace('/permission', '') }}"
-      device_id_entity: >
-        {{ states.sensor | selectattr('attributes.state_topic_base', 'defined')
-           | selectattr('attributes.state_topic_base', 'eq', state_topic_base)
-           | map(attribute='entity_id') | first | default('') }}
-      entity_base: "{{ device_id_entity | replace('_device_id', '') }}"
-      permission_entity: "{{ entity_base }}_permission"
-      command_topic: "{{ state_attr(device_id_entity, 'command_topic') }}"
-      device_id: "{{ states(device_id_entity) }}"
-    condition:
-      - condition: template
-        value_template: "{{ device_id_entity != '' }}"
-    action:
-      # Small delay to let attributes arrive
-      - delay:
-          milliseconds: 300
-      - service: notify.mobile_app_your_phone
-        data:
-          title: "OpenCode: Permission Required"
-          message: "{{ state_attr(permission_entity, 'title') | default('Permission needed') }}"
-          data:
-            tag: "opencode-permission-{{ device_id }}"
-            channel: "OpenCode"
-            importance: high
-            actions:
-              - action: "OPENCODE_APPROVE_{{ device_id }}"
-                title: "Approve"
-              - action: "OPENCODE_REJECT_{{ device_id }}"
-                title: "Reject"
-            data:
-              device_id: "{{ device_id }}"
-              permission_id: "{{ state_attr(permission_entity, 'permission_id') }}"
-              command_topic: "{{ command_topic }}"
-```
+**OpenCode State Notifications:**
+- **Notification Target**: Your mobile device (iOS or Android)
+- **Notify on Complete**: Enable/disable task completion notifications
+- **Notify on Permission**: Enable/disable permission request notifications
+- **Notify on Error**: Enable/disable error notifications
+- **Notification Channel**: Android channel name (ignored on iOS)
+- **Dashboard Path**: Where to navigate when notification is tapped
+
+### Manual Setup (Alternative)
+
+If you prefer to create automations manually, see the full YAML examples in the `blueprints/` directory. The key components are:
+
+1. **MQTT Trigger**: Listen to `opencode/+/state` for state changes
+2. **Entity Lookup**: Find the device by matching `state_topic_base` attribute
+3. **Conditional Notifications**: Different actions for idle, permission, error states
+4. **Permission Response**: Handle `mobile_app_notification_action` events
 
 ### Cost Tracking
 

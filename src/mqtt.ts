@@ -71,16 +71,50 @@ export async function connectMqtt(config: MqttConfig, will?: MqttWillConfig): Pr
   });
 }
 
+/**
+ * Check if a topic matches a pattern with MQTT wildcards.
+ * + matches a single level, # matches multiple levels.
+ */
+function topicMatchesPattern(topic: string, pattern: string): boolean {
+  const topicParts = topic.split("/");
+  const patternParts = pattern.split("/");
+
+  for (let i = 0; i < patternParts.length; i++) {
+    const patternPart = patternParts[i];
+
+    if (patternPart === "#") {
+      // # matches everything from this point
+      return true;
+    }
+
+    if (i >= topicParts.length) {
+      // Topic is shorter than pattern
+      return false;
+    }
+
+    if (patternPart !== "+" && patternPart !== topicParts[i]) {
+      // Not a wildcard and doesn't match
+      return false;
+    }
+  }
+
+  // Pattern and topic must be same length (unless pattern ends with #)
+  return topicParts.length === patternParts.length;
+}
+
 function createWrapper(client: MqttClient): MqttWrapper {
   const handlers = new Map<string, MessageHandler>();
 
   client.on("message", (topic, payload) => {
-    const handler = handlers.get(topic);
-    if (handler) {
-      try {
-        handler(topic, payload.toString());
-      } catch (err) {
-        console.error(`[ha-opencode] Error handling message on ${topic}:`, err);
+    // Check all registered patterns for a match
+    for (const [pattern, handler] of handlers) {
+      if (topicMatchesPattern(topic, pattern)) {
+        try {
+          handler(topic, payload.toString());
+        } catch (err) {
+          console.error(`[ha-opencode] Error handling message on ${topic}:`, err);
+        }
+        break; // Only call first matching handler
       }
     }
   });

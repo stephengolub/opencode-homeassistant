@@ -1,0 +1,46 @@
+blueprint:
+  name: OpenCode Permission Response Handler
+  description: >
+    Handles approve/reject actions from OpenCode permission notifications.
+    
+    This blueprint listens for notification actions (button taps) and sends
+    the appropriate permission response via MQTT.
+    
+    Works with both iOS and Android via the Home Assistant Companion app.
+    
+    Use this together with the OpenCode State Notifications blueprint.
+  domain: automation
+  author: ha-opencode
+  source_url: https://github.com/your-repo/ha-opencode/blob/main/blueprints/opencode_permission_response.yaml
+  input: {}
+
+mode: parallel
+max_exceeded: silent
+
+trigger:
+  - platform: event
+    event_type: mobile_app_notification_action
+
+condition:
+  - condition: template
+    value_template: >
+      {{ trigger.event.data.action is defined and
+         (trigger.event.data.action.startswith('OPENCODE_APPROVE_') or
+          trigger.event.data.action.startswith('OPENCODE_REJECT_')) }}
+
+variables:
+  is_approve: "{{ trigger.event.data.action.startswith('OPENCODE_APPROVE_') }}"
+  response: "{{ 'once' if is_approve else 'reject' }}"
+  # Get data passed from the notification (works for both iOS and Android)
+  action_data: "{{ trigger.event.data.action_data | default(trigger.event.data.data | default({})) }}"
+  command_topic: "{{ action_data.command_topic | default('') }}"
+  permission_id: "{{ action_data.permission_id | default('') }}"
+
+action:
+  - condition: template
+    value_template: "{{ command_topic != '' and permission_id != '' }}"
+  - service: mqtt.publish
+    data:
+      topic: "{{ command_topic }}"
+      payload: >
+        {"command": "permission_response", "permission_id": "{{ permission_id }}", "response": "{{ response }}"}

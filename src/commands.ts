@@ -2,7 +2,9 @@ import type { OpencodeClient } from "@opencode-ai/sdk";
 import type { MqttWrapper } from "./mqtt.js";
 import type { Discovery } from "./discovery.js";
 import type { StateTracker } from "./state.js";
+import type { HaConfig } from "./config.js";
 import { notify } from "./notify.js";
+import { cleanupStaleSessionsManual } from "./cleanup.js";
 
 // Command payload structures
 interface PermissionCommand {
@@ -28,6 +30,11 @@ interface GetHistorySinceCommand {
   since: string; // ISO 8601 timestamp
   session_id?: string;
   request_id?: string;
+}
+
+interface CleanupCommand {
+  command: "cleanup_stale_sessions";
+  max_age_days?: number; // Optional, defaults to 7
 }
 
 // Structured message format for history response
@@ -73,17 +80,20 @@ export class CommandHandler {
   private readonly discovery: Discovery;
   private readonly state: StateTracker;
   private readonly client: OpencodeClient;
+  private readonly haConfig: HaConfig;
 
   constructor(
     mqtt: MqttWrapper,
     discovery: Discovery,
     state: StateTracker,
-    client: OpencodeClient
+    client: OpencodeClient,
+    haConfig: HaConfig
   ) {
     this.mqtt = mqtt;
     this.discovery = discovery;
     this.state = state;
     this.client = client;
+    this.haConfig = haConfig;
   }
 
   async start(): Promise<void> {
@@ -131,8 +141,29 @@ export class CommandHandler {
       case "get_history_since":
         await this.handleGetHistorySince(command as unknown as GetHistorySinceCommand);
         break;
+      case "cleanup_stale_sessions":
+        await this.handleCleanup(command as unknown as CleanupCommand);
+        break;
       default:
         notify("Unknown Command", `Unrecognized: ${command.command}`);
+    }
+  }
+
+  private async handleCleanup(command: CleanupCommand): Promise<void> {
+    const maxAgeDays = command.max_age_days ?? 7;
+
+    notify("Cleanup Started", `Removing sessions older than ${maxAgeDays} days`);
+
+    try {
+      await cleanupStaleSessionsManual(this.mqtt, {
+        maxAgeDays,
+        haConfig: this.haConfig,
+      });
+      notify("Cleanup Complete", "Check opencode/cleanup/response for results");
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Unknown error";
+      notify("Cleanup Failed", errorMsg);
+      console.error("[ha-opencode] Failed to run cleanup:", err);
     }
   }
 
@@ -348,11 +379,11 @@ export class CommandHandler {
       });
 
       // Notify user of successful permission response
-      const responseLabel = command.response === "once" ? "Approved (once)" 
-        : command.response === "always" ? "Approved (always)" 
-        : "Rejected";
+      const responseLabel = command.response === "once" ? "Approved (once)"
+        : command.response === "always" ? "Approved (always)"
+          : "Rejected";
       notify("Permission Response", responseLabel);
-      
+
       await this.state.clearPermission();
     } catch (err) {
       notify("Permission Error", "Failed to send response");

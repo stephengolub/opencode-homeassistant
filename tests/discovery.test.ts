@@ -1,30 +1,24 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   Discovery,
-  getAvailabilityTopicForProject,
+  extractSessionIdPart,
+  getDeviceIdForSession,
+  getAvailabilityTopicForSession,
   createWillConfig,
   type PermissionInfo,
 } from "../src/discovery.js";
 import type { MqttWrapper } from "../src/mqtt.js";
 import type { HaConfig } from "../src/config.js";
-import type { Project } from "@opencode-ai/sdk";
 
 // Mock MQTT
 function createMockMqtt(): MqttWrapper {
   return {
     publish: vi.fn().mockResolvedValue(undefined),
     subscribe: vi.fn().mockResolvedValue(undefined),
+    unsubscribe: vi.fn().mockResolvedValue(undefined),
+    isConnected: vi.fn().mockReturnValue(true),
     close: vi.fn().mockResolvedValue(undefined),
   } as unknown as MqttWrapper;
-}
-
-// Mock Project
-function createMockProject(overrides?: Partial<Project>): Project {
-  return {
-    id: "project-123",
-    worktree: "/Users/test/code/my-project",
-    ...overrides,
-  } as Project;
 }
 
 // Default HA config
@@ -32,43 +26,52 @@ const defaultHaConfig: HaConfig = {
   discoveryPrefix: "homeassistant",
 };
 
-describe("getAvailabilityTopicForProject", () => {
-  it("should generate availability topic from worktree path", () => {
-    const project = createMockProject({ worktree: "/Users/test/code/my-project" });
-    const topic = getAvailabilityTopicForProject(project);
-
-    expect(topic).toBe("opencode/opencode_my-project/availability");
+describe("extractSessionIdPart", () => {
+  it("should strip ses_ prefix", () => {
+    expect(extractSessionIdPart("ses_abc123")).toBe("abc123");
   });
 
-  it("should sanitize project name", () => {
-    const project = createMockProject({ worktree: "/path/to/My Project Name" });
-    const topic = getAvailabilityTopicForProject(project);
-
-    expect(topic).toBe("opencode/opencode_my_project_name/availability");
+  it("should handle session ID without prefix", () => {
+    expect(extractSessionIdPart("abc123")).toBe("abc123");
   });
 
-  it("should handle worktree with no path separators", () => {
-    const project = createMockProject({ worktree: "standalone" });
-    const topic = getAvailabilityTopicForProject(project);
+  it("should handle full session ID", () => {
+    expect(extractSessionIdPart("ses_46b09b89bffevq6HeMNIkuvk4B")).toBe(
+      "46b09b89bffevq6HeMNIkuvk4B"
+    );
+  });
+});
 
-    expect(topic).toBe("opencode/opencode_standalone/availability");
+describe("getDeviceIdForSession", () => {
+  it("should generate device ID from session ID", () => {
+    expect(getDeviceIdForSession("ses_abc123")).toBe("opencode_abc123");
   });
 
-  it("should use 'unknown' for empty worktree", () => {
-    const project = createMockProject({ worktree: "" });
-    const topic = getAvailabilityTopicForProject(project);
+  it("should handle full session ID", () => {
+    expect(getDeviceIdForSession("ses_46b09b89bffevq6HeMNIkuvk4B")).toBe(
+      "opencode_46b09b89bffevq6HeMNIkuvk4B"
+    );
+  });
+});
 
-    expect(topic).toBe("opencode/opencode_unknown/availability");
+describe("getAvailabilityTopicForSession", () => {
+  it("should generate availability topic from session ID", () => {
+    const topic = getAvailabilityTopicForSession("ses_abc123");
+    expect(topic).toBe("opencode/opencode_abc123/availability");
+  });
+
+  it("should handle full session ID", () => {
+    const topic = getAvailabilityTopicForSession("ses_46b09b89bffevq6HeMNIkuvk4B");
+    expect(topic).toBe("opencode/opencode_46b09b89bffevq6HeMNIkuvk4B/availability");
   });
 });
 
 describe("createWillConfig", () => {
   it("should create LWT config with offline payload", () => {
-    const project = createMockProject({ worktree: "/path/to/test-project" });
-    const willConfig = createWillConfig(project);
+    const willConfig = createWillConfig("ses_abc123");
 
     expect(willConfig).toEqual({
-      topic: "opencode/opencode_test-project/availability",
+      topic: "opencode/opencode_abc123/availability",
       payload: "offline",
       retain: true,
     });
@@ -78,59 +81,62 @@ describe("createWillConfig", () => {
 describe("Discovery", () => {
   let mqtt: MqttWrapper;
   let discovery: Discovery;
-  let project: Project;
+  const sessionId = "ses_abc123def456";
+  const projectName = "my-project";
 
   beforeEach(() => {
     vi.clearAllMocks();
     mqtt = createMockMqtt();
-    project = createMockProject();
-    discovery = new Discovery(mqtt, defaultHaConfig, project);
+    discovery = new Discovery(mqtt, defaultHaConfig, sessionId, projectName);
   });
 
   describe("constructor", () => {
-    it("should set deviceId from worktree project name", () => {
-      expect(discovery.deviceId).toBe("opencode_my-project");
+    it("should set deviceId from session ID", () => {
+      expect(discovery.deviceId).toBe("opencode_abc123def456");
     });
 
-    it("should sanitize special characters in project name", () => {
-      const specialProject = createMockProject({ worktree: "/path/My Project (Test)" });
-      const d = new Discovery(mqtt, defaultHaConfig, specialProject);
-
-      expect(d.deviceId).toBe("opencode_my_project__test_");
-    });
-
-    it("should handle project with trailing slash", () => {
-      const trailingSlash = createMockProject({ worktree: "/path/to/project/" });
-      const d = new Discovery(mqtt, defaultHaConfig, trailingSlash);
-
-      // Empty string after split, falls back to "unknown"
-      expect(d.deviceId).toBe("opencode_unknown");
+    it("should handle full session ID format", () => {
+      const d = new Discovery(
+        mqtt,
+        defaultHaConfig,
+        "ses_46b09b89bffevq6HeMNIkuvk4B",
+        "test-project"
+      );
+      expect(d.deviceId).toBe("opencode_46b09b89bffevq6HeMNIkuvk4B");
     });
   });
 
   describe("topic generation", () => {
     it("should generate correct state topic", () => {
-      expect(discovery.getStateTopic("state")).toBe("opencode/opencode_my-project/state");
-      expect(discovery.getStateTopic("model")).toBe("opencode/opencode_my-project/model");
+      expect(discovery.getStateTopic("state")).toBe(
+        "opencode/opencode_abc123def456/state"
+      );
+      expect(discovery.getStateTopic("model")).toBe(
+        "opencode/opencode_abc123def456/model"
+      );
     });
 
     it("should generate correct attributes topic", () => {
       expect(discovery.getAttributesTopic("state")).toBe(
-        "opencode/opencode_my-project/state/attributes"
+        "opencode/opencode_abc123def456/state/attributes"
       );
     });
 
     it("should generate correct command topic", () => {
-      expect(discovery.getCommandTopic()).toBe("opencode/opencode_my-project/command");
+      expect(discovery.getCommandTopic()).toBe(
+        "opencode/opencode_abc123def456/command"
+      );
     });
 
     it("should generate correct response topic", () => {
-      expect(discovery.getResponseTopic()).toBe("opencode/opencode_my-project/response");
+      expect(discovery.getResponseTopic()).toBe(
+        "opencode/opencode_abc123def456/response"
+      );
     });
 
     it("should generate correct availability topic", () => {
       expect(discovery.getAvailabilityTopic()).toBe(
-        "opencode/opencode_my-project/availability"
+        "opencode/opencode_abc123def456/availability"
       );
     });
   });
@@ -148,29 +154,29 @@ describe("Discovery", () => {
 
       // Check one entity config topic
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "homeassistant/sensor/opencode_my-project/state/config",
+        "homeassistant/sensor/opencode_abc123def456/state/config",
         expect.objectContaining({
           name: "State",
-          unique_id: "opencode_my-project_state",
-          state_topic: "opencode/opencode_my-project/state",
+          unique_id: "opencode_abc123def456_state",
+          state_topic: "opencode/opencode_abc123def456/state",
           icon: "mdi:state-machine",
         }),
         true
       );
     });
 
-    it("should include device info in entity config", async () => {
+    it("should include device info with session-based naming", async () => {
       await discovery.registerDevice();
 
       expect(mqtt.publish).toHaveBeenCalledWith(
         expect.stringContaining("/config"),
         expect.objectContaining({
           device: {
-            identifiers: ["opencode_my-project"],
-            name: "OpenCode - my-project",
+            identifiers: ["opencode_abc123def456"],
+            name: "OpenCode - my-project - Untitled",
             manufacturer: "OpenCode",
             model: "AI Coding Assistant",
-            sw_version: "project-123",
+            sw_version: "ses_abc123def456",
           },
         }),
         true
@@ -183,7 +189,7 @@ describe("Discovery", () => {
       expect(mqtt.publish).toHaveBeenCalledWith(
         expect.stringContaining("/config"),
         expect.objectContaining({
-          availability_topic: "opencode/opencode_my-project/availability",
+          availability_topic: "opencode/opencode_abc123def456/availability",
           payload_available: "online",
           payload_not_available: "offline",
         }),
@@ -194,11 +200,11 @@ describe("Discovery", () => {
     it("should include json_attributes_topic for entities with attributes", async () => {
       await discovery.registerDevice();
 
-      // state entity has attributes
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "homeassistant/sensor/opencode_my-project/state/config",
+        "homeassistant/sensor/opencode_abc123def456/state/config",
         expect.objectContaining({
-          json_attributes_topic: "opencode/opencode_my-project/state/attributes",
+          json_attributes_topic:
+            "opencode/opencode_abc123def456/state/attributes",
         }),
         true
       );
@@ -208,7 +214,7 @@ describe("Discovery", () => {
       await discovery.registerDevice();
 
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "homeassistant/sensor/opencode_my-project/tokens_input/config",
+        "homeassistant/sensor/opencode_abc123def456/tokens_input/config",
         expect.objectContaining({
           unit_of_measurement: "tokens",
           state_class: "measurement",
@@ -221,7 +227,7 @@ describe("Discovery", () => {
       await discovery.registerDevice();
 
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "homeassistant/sensor/opencode_my-project/last_activity/config",
+        "homeassistant/sensor/opencode_abc123def456/last_activity/config",
         expect.objectContaining({
           device_class: "timestamp",
         }),
@@ -231,13 +237,30 @@ describe("Discovery", () => {
 
     it("should use custom discovery prefix", async () => {
       const customConfig: HaConfig = { discoveryPrefix: "custom_ha" };
-      const d = new Discovery(mqtt, customConfig, project);
+      const d = new Discovery(mqtt, customConfig, sessionId, projectName);
 
       await d.registerDevice();
 
       expect(mqtt.publish).toHaveBeenCalledWith(
         expect.stringMatching(/^custom_ha\/sensor\//),
         expect.any(Object),
+        true
+      );
+    });
+  });
+
+  describe("updateDeviceName", () => {
+    it("should update device name and re-register", async () => {
+      await discovery.updateDeviceName("Implementing feature X");
+
+      // Should re-register all entities with new name
+      expect(mqtt.publish).toHaveBeenCalledWith(
+        expect.stringContaining("/config"),
+        expect.objectContaining({
+          device: expect.objectContaining({
+            name: "OpenCode - my-project - Implementing feature X",
+          }),
+        }),
         true
       );
     });
@@ -252,7 +275,7 @@ describe("Discovery", () => {
 
       // Check empty payload
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "homeassistant/sensor/opencode_my-project/state/config",
+        "homeassistant/sensor/opencode_abc123def456/state/config",
         "",
         true
       );
@@ -264,7 +287,7 @@ describe("Discovery", () => {
       await discovery.publishState("state", "working");
 
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "opencode/opencode_my-project/state",
+        "opencode/opencode_abc123def456/state",
         "working",
         true
       );
@@ -274,7 +297,7 @@ describe("Discovery", () => {
       await discovery.publishState("tokens_input", 1000);
 
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "opencode/opencode_my-project/tokens_input",
+        "opencode/opencode_abc123def456/tokens_input",
         "1000",
         true
       );
@@ -284,7 +307,7 @@ describe("Discovery", () => {
       await discovery.publishState("cost", 0.00123456789);
 
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "opencode/opencode_my-project/cost",
+        "opencode/opencode_abc123def456/cost",
         "0.001235",
         true
       );
@@ -294,7 +317,7 @@ describe("Discovery", () => {
       await discovery.publishState("cost", 0);
 
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "opencode/opencode_my-project/cost",
+        "opencode/opencode_abc123def456/cost",
         "0.000000",
         true
       );
@@ -307,7 +330,7 @@ describe("Discovery", () => {
       await discovery.publishAttributes("state", attrs);
 
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "opencode/opencode_my-project/state/attributes",
+        "opencode/opencode_abc123def456/state/attributes",
         attrs,
         true
       );
@@ -319,7 +342,7 @@ describe("Discovery", () => {
       await discovery.publishAvailable();
 
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "opencode/opencode_my-project/availability",
+        "opencode/opencode_abc123def456/availability",
         "online",
         true
       );
@@ -329,7 +352,7 @@ describe("Discovery", () => {
       await discovery.publishUnavailable();
 
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "opencode/opencode_my-project/availability",
+        "opencode/opencode_abc123def456/availability",
         "offline",
         true
       );
@@ -341,18 +364,20 @@ describe("Discovery", () => {
       await discovery.publishDeviceInfo();
 
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "opencode/opencode_my-project/device_id",
-        "opencode_my-project",
+        "opencode/opencode_abc123def456/device_id",
+        "opencode_abc123def456",
         true
       );
 
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "opencode/opencode_my-project/device_id/attributes",
+        "opencode/opencode_abc123def456/device_id/attributes",
         {
-          command_topic: "opencode/opencode_my-project/command",
-          response_topic: "opencode/opencode_my-project/response",
-          state_topic_base: "opencode/opencode_my-project",
-          device_name: "OpenCode - my-project",
+          command_topic: "opencode/opencode_abc123def456/command",
+          response_topic: "opencode/opencode_abc123def456/response",
+          state_topic_base: "opencode/opencode_abc123def456",
+          device_name: "OpenCode - my-project - Untitled",
+          session_id: "ses_abc123def456",
+          project_name: "my-project",
         },
         true
       );
@@ -375,13 +400,13 @@ describe("Discovery", () => {
       await discovery.publishPermission(permission);
 
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "opencode/opencode_my-project/permission",
+        "opencode/opencode_abc123def456/permission",
         "pending",
         true
       );
 
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "opencode/opencode_my-project/permission/attributes",
+        "opencode/opencode_abc123def456/permission/attributes",
         {
           permission_id: "perm-123",
           type: "file_write",
@@ -409,7 +434,7 @@ describe("Discovery", () => {
       await discovery.publishPermission(permission);
 
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "opencode/opencode_my-project/permission/attributes",
+        "opencode/opencode_abc123def456/permission/attributes",
         expect.objectContaining({
           call_id: null,
           pattern: null,
@@ -422,13 +447,13 @@ describe("Discovery", () => {
       await discovery.publishPermission(null);
 
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "opencode/opencode_my-project/permission",
+        "opencode/opencode_abc123def456/permission",
         "none",
         true
       );
 
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "opencode/opencode_my-project/permission/attributes",
+        "opencode/opencode_abc123def456/permission/attributes",
         {},
         true
       );
@@ -452,7 +477,7 @@ describe("Discovery", () => {
 
       // Should have error fallback
       expect(mqtt.publish).toHaveBeenCalledWith(
-        "opencode/opencode_my-project/permission/attributes",
+        "opencode/opencode_abc123def456/permission/attributes",
         expect.objectContaining({
           metadata: { error: "metadata not serializable" },
         }),
@@ -461,46 +486,14 @@ describe("Discovery", () => {
     });
   });
 
-  describe("edge cases", () => {
-    it("should use project.id for sw_version when available", () => {
-      const projectWithId = createMockProject({
-        id: "custom-version-123",
-        worktree: "/path/to/test",
-      });
-      const d = new Discovery(mqtt, defaultHaConfig, projectWithId);
-
-      // Need to register to check device info
-      d.registerDevice();
-
-      expect(mqtt.publish).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          device: expect.objectContaining({
-            sw_version: "custom-version-123",
-          }),
-        }),
-        true
-      );
-    });
-
-    it("should use project name for sw_version when id is empty", async () => {
-      const projectNoId = createMockProject({
-        id: "",
-        worktree: "/path/to/fallback-project",
-      });
-      const d = new Discovery(mqtt, defaultHaConfig, projectNoId);
-
-      await d.registerDevice();
-
-      expect(mqtt.publish).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          device: expect.objectContaining({
-            sw_version: "fallback-project",
-          }),
-        }),
-        true
-      );
+  describe("getEntityKeys", () => {
+    it("should return all entity keys", () => {
+      const keys = Discovery.getEntityKeys();
+      expect(keys).toContain("state");
+      expect(keys).toContain("session_title");
+      expect(keys).toContain("model");
+      expect(keys).toContain("permission");
+      expect(keys.length).toBe(10);
     });
   });
 });

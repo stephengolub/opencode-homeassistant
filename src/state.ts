@@ -24,14 +24,14 @@ export class StateTracker {
   private state: TrackedState;
   private pendingPermission: PermissionInfo | null = null;
   private currentSessionId: string | null = null;
-  private deviceRegistered = false;
+  private deviceNameUpdated = false;
 
   constructor(discovery: Discovery) {
     this.discovery = discovery;
     this.state = {
       state: "idle",
       previousState: null,
-      sessionTitle: "No active session",
+      sessionTitle: "Untitled",
       model: "unknown",
       currentTool: "none",
       tokensInput: 0,
@@ -49,37 +49,29 @@ export class StateTracker {
   }
 
   /**
-   * Check if we have a valid session to publish state for.
-   * We don't want to send updates to HA until we have a real session title.
+   * Check if we have a valid session title for updating the device friendly name.
    */
-  private hasValidSession(): boolean {
+  private hasValidTitle(): boolean {
     const title = this.state.sessionTitle;
-    return !!(title && 
-              title !== "No active session" && 
-              title !== "Untitled" &&
-              title.toLowerCase() !== "unknown");
-  }
-
-  async initialize(): Promise<void> {
-    // Don't register device or publish anything yet
-    // Wait until we have a valid session to avoid creating "unknown" entities
-    // Device registration will happen in ensureDeviceRegistered() when session is valid
+    return !!(
+      title &&
+      title !== "No active session" &&
+      title !== "Untitled" &&
+      title.toLowerCase() !== "unknown"
+    );
   }
 
   /**
-   * Register the device with Home Assistant if not already registered.
-   * Called when we first get a valid session.
+   * Initialize the state tracker.
+   * Registers the device with Home Assistant immediately since we have the session ID.
    */
-  private async ensureDeviceRegistered(): Promise<void> {
-    if (this.deviceRegistered) {
-      return;
-    }
-    
+  async initialize(): Promise<void> {
     await this.discovery.registerDevice();
     await this.discovery.publishDeviceInfo();
-    // Publish "online" status for availability tracking
     await this.discovery.publishAvailable();
-    this.deviceRegistered = true;
+    await this.publishAll();
+    await this.publishStateAttributes();
+    await this.discovery.publishPermission(null);
   }
 
   getPendingPermission(): PermissionInfo | null {
@@ -115,19 +107,30 @@ export class StateTracker {
           break;
       }
     } catch (err) {
-      console.error(`[ha-opencode] Error in handleEvent for '${event.type}':`, err);
-      console.error(`[ha-opencode] Event properties:`, JSON.stringify(event.properties, null, 2));
-      throw err; // Re-throw so the outer handler can log the full stack
+      console.error(
+        `[ha-opencode] Error in handleEvent for '${event.type}':`,
+        err
+      );
+      console.error(
+        `[ha-opencode] Event properties:`,
+        JSON.stringify(event.properties, null, 2)
+      );
+      throw err;
     }
   }
 
-  private async onSessionCreated(event: Extract<Event, { type: "session.created" }>): Promise<void> {
+  private async onSessionCreated(
+    event: Extract<Event, { type: "session.created" }>
+  ): Promise<void> {
     this.currentSessionId = event.properties.info.id;
     this.state.sessionTitle = event.properties.info.title || "Untitled";
     this.state.tokensInput = 0;
     this.state.tokensOutput = 0;
     this.state.cost = 0;
     this.updateActivity();
+
+    // Check if we got a valid title on creation
+    await this.maybeUpdateDeviceName();
 
     await this.publish("session_title", this.state.sessionTitle);
     await this.updateState("idle");
@@ -137,32 +140,42 @@ export class StateTracker {
     await this.publish("last_activity", this.state.lastActivity);
   }
 
-  private async onSessionUpdated(event: Extract<Event, { type: "session.updated" }>): Promise<void> {
+  private async onSessionUpdated(
+    event: Extract<Event, { type: "session.updated" }>
+  ): Promise<void> {
     const title = event.properties.info.title;
-    const hadValidSession = this.hasValidSession();
     const titleChanged = title && title !== this.state.sessionTitle;
-    
+
     if (titleChanged) {
       this.state.sessionTitle = title;
     }
     this.updateActivity();
-    
-    // If we just got a valid session title, register device and publish everything
-    if (!hadValidSession && this.hasValidSession()) {
-      await this.ensureDeviceRegistered();
-      await this.publishAll();
-      await this.publishStateAttributes();
-      await this.discovery.publishPermission(null);
-    } else if (this.hasValidSession()) {
-      // Normal update - just publish what changed
-      if (titleChanged) {
-        await this.publish("session_title", this.state.sessionTitle);
-      }
-      await this.publish("last_activity", this.state.lastActivity);
+
+    // Update device friendly name when we get a valid title
+    await this.maybeUpdateDeviceName();
+
+    if (titleChanged) {
+      await this.publish("session_title", this.state.sessionTitle);
+    }
+    await this.publish("last_activity", this.state.lastActivity);
+  }
+
+  /**
+   * Update the device friendly name in Home Assistant if we have a valid title
+   * and haven't done so yet.
+   */
+  private async maybeUpdateDeviceName(): Promise<void> {
+    if (!this.deviceNameUpdated && this.hasValidTitle()) {
+      await this.discovery.updateDeviceName(this.state.sessionTitle);
+      // Also update device_id attributes with new device name
+      await this.discovery.publishDeviceInfo();
+      this.deviceNameUpdated = true;
     }
   }
 
-  private async onSessionIdle(_event: Extract<Event, { type: "session.idle" }>): Promise<void> {
+  private async onSessionIdle(
+    _event: Extract<Event, { type: "session.idle" }>
+  ): Promise<void> {
     this.state.currentTool = "none";
     this.updateActivity();
 
@@ -171,9 +184,11 @@ export class StateTracker {
     await this.publish("last_activity", this.state.lastActivity);
   }
 
-  private async onSessionError(event: Extract<Event, { type: "session.error" }>): Promise<void> {
+  private async onSessionError(
+    event: Extract<Event, { type: "session.error" }>
+  ): Promise<void> {
     this.updateActivity();
-    
+
     // Capture error message if available
     const error = event.properties.error;
     if (error && typeof error === "object" && "message" in error) {
@@ -188,7 +203,9 @@ export class StateTracker {
     await this.publish("last_activity", this.state.lastActivity);
   }
 
-  private async onMessageUpdated(event: Extract<Event, { type: "message.updated" }>): Promise<void> {
+  private async onMessageUpdated(
+    event: Extract<Event, { type: "message.updated" }>
+  ): Promise<void> {
     const message = event.properties.info;
 
     if (message.role === "user") {
@@ -219,7 +236,9 @@ export class StateTracker {
     await this.publish("last_activity", this.state.lastActivity);
   }
 
-  private async onMessagePartUpdated(event: Extract<Event, { type: "message.part.updated" }>): Promise<void> {
+  private async onMessagePartUpdated(
+    event: Extract<Event, { type: "message.part.updated" }>
+  ): Promise<void> {
     const part = event.properties.part;
 
     // When receiving text parts with deltas, the model is actively working
@@ -253,7 +272,9 @@ export class StateTracker {
     await this.publish("last_activity", this.state.lastActivity);
   }
 
-  private async onPermissionUpdated(event: Extract<Event, { type: "permission.updated" }>): Promise<void> {
+  private async onPermissionUpdated(
+    event: Extract<Event, { type: "permission.updated" }>
+  ): Promise<void> {
     const permission = event.properties as Permission;
 
     this.pendingPermission = {
@@ -274,7 +295,9 @@ export class StateTracker {
     await this.discovery.publishPermission(this.pendingPermission);
   }
 
-  private async onPermissionReplied(_event: Extract<Event, { type: "permission.replied" }>): Promise<void> {
+  private async onPermissionReplied(
+    _event: Extract<Event, { type: "permission.replied" }>
+  ): Promise<void> {
     this.pendingPermission = null;
     this.updateActivity();
 
@@ -296,17 +319,12 @@ export class StateTracker {
     if (this.state.state !== newState) {
       this.state.previousState = this.state.state;
       this.state.state = newState;
-      
+
       // Clear error message when transitioning away from error state
       if (newState !== "error") {
         this.state.errorMessage = null;
       }
-      
-      // Don't publish state to HA until we have a valid session title
-      if (!this.hasValidSession()) {
-        return;
-      }
-      
+
       // IMPORTANT: Publish attributes BEFORE state so that when HA automation
       // triggers on state topic, the previous_state attribute is already available
       await this.publishStateAttributes();
@@ -315,11 +333,6 @@ export class StateTracker {
   }
 
   private async publishStateAttributes(): Promise<void> {
-    // Don't publish to HA until we have a valid session title
-    if (!this.hasValidSession()) {
-      return;
-    }
-    
     await this.discovery.publishAttributes("state", {
       previous_state: this.state.previousState,
       agent: this.state.agent,
@@ -329,12 +342,10 @@ export class StateTracker {
     });
   }
 
-  private async publish(key: EntityKey, value: string | number): Promise<void> {
-    // Don't publish to HA until we have a valid session title
-    if (!this.hasValidSession()) {
-      return;
-    }
-    
+  private async publish(
+    key: EntityKey,
+    value: string | number
+  ): Promise<void> {
     try {
       await this.discovery.publishState(key, value);
     } catch (err) {

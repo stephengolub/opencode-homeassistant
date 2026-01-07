@@ -3,12 +3,23 @@ import { CommandHandler } from "../src/commands.js";
 import type { Discovery } from "../src/discovery.js";
 import type { StateTracker } from "../src/state.js";
 import type { MqttWrapper } from "../src/mqtt.js";
+import type { HaConfig } from "../src/config.js";
 import type { OpencodeClient } from "@opencode-ai/sdk";
 
 // Mock notify module
 vi.mock("../src/notify.js", () => ({
   notify: vi.fn(),
 }));
+
+// Mock cleanup module
+vi.mock("../src/cleanup.js", () => ({
+  cleanupStaleSessionsManual: vi.fn().mockResolvedValue(undefined),
+}));
+
+// Default HA config for tests
+const defaultHaConfig: HaConfig = {
+  discoveryPrefix: "homeassistant",
+};
 
 // Mock MQTT
 function createMockMqtt(): MqttWrapper {
@@ -76,7 +87,7 @@ describe("CommandHandler", () => {
     discovery = createMockDiscovery();
     state = createMockState({ sessionId: "session-1" });
     client = createMockClient();
-    handler = new CommandHandler(mqtt, discovery, state, client);
+    handler = new CommandHandler(mqtt, discovery, state, client, defaultHaConfig);
 
     // Capture the subscribe callback
     (mqtt.subscribe as Mock).mockImplementation((_topic: string, cb: (topic: string, payload: string) => void) => {
@@ -185,7 +196,7 @@ describe("CommandHandler", () => {
     it("should reject prompt when no active session", async () => {
       // Recreate with no session
       state = createMockState({ sessionId: null });
-      handler = new CommandHandler(mqtt, discovery, state, client);
+      handler = new CommandHandler(mqtt, discovery, state, client, defaultHaConfig);
       await handler.start();
 
       const { notify } = await import("../src/notify.js");
@@ -212,7 +223,7 @@ describe("CommandHandler", () => {
 
     beforeEach(async () => {
       state = createMockState({ sessionId: "session-1", pendingPermission });
-      handler = new CommandHandler(mqtt, discovery, state, client);
+      handler = new CommandHandler(mqtt, discovery, state, client, defaultHaConfig);
       await handler.start();
     });
 
@@ -302,7 +313,7 @@ describe("CommandHandler", () => {
 
     it("should reject when no pending permission", async () => {
       state = createMockState({ sessionId: "session-1", pendingPermission: null });
-      handler = new CommandHandler(mqtt, discovery, state, client);
+      handler = new CommandHandler(mqtt, discovery, state, client, defaultHaConfig);
       await handler.start();
 
       const { notify } = await import("../src/notify.js");
@@ -463,7 +474,7 @@ describe("CommandHandler", () => {
 
     it("should reject when no active session", async () => {
       state = createMockState({ sessionId: null });
-      handler = new CommandHandler(mqtt, discovery, state, client);
+      handler = new CommandHandler(mqtt, discovery, state, client, defaultHaConfig);
       await handler.start();
 
       const { notify } = await import("../src/notify.js");
@@ -777,7 +788,7 @@ describe("CommandHandler", () => {
           messageID: "msg-1",
         },
       });
-      handler = new CommandHandler(mqtt, discovery, state, client);
+      handler = new CommandHandler(mqtt, discovery, state, client, defaultHaConfig);
       await handler.start();
 
       (client.postSessionIdPermissionsPermissionId as Mock).mockRejectedValue(
