@@ -1,0 +1,92 @@
+site_name: OpenCode Home Assistant Plugin
+site_description: OpenCode plugin for Home Assistant integration via MQTT
+site_url: https://opencode-home-assistant.gitlab.io/opencode-plugin
+repo_url: https://gitlab.com/opencode-home-assistant/opencode-plugin
+repo_name: opencode-home-assistant/opencode-plugin
+
+theme:
+  name: material
+  palette:
+    # Light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+  icon:
+    repo: fontawesome/brands/gitlab
+
+plugins:
+  - search
+  - mike:
+      alias_type: symlink
+      canonical_version: latest
+      version_selector: true
+
+extra:
+  version:
+    provider: mike
+    default: latest
+  social:
+    - icon: fontawesome/brands/gitlab
+      link: https://gitlab.com/opencode-home-assistant/opencode-plugin
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Configuration: getting-started/configuration.md
+      - Quick Start: getting-started/quick-start.md
+  - Features:
+      - MQTT Integration: features/mqtt.md
+      - Home Assistant Entities: features/entities.md
+      - Commands: features/commands.md
+      - Permissions: features/permissions.md
+  - Companion Card:
+      - Overview: card/overview.md
+      - Installation: card/installation.md
+      - Configuration: card/configuration.md
+  - Blueprints:
+      - Overview: blueprints/overview.md
+      - Permission Response: blueprints/permission-response.md
+      - State Notifications: blueprints/state-notifications.md
+  - Development:
+      - Contributing: development/contributing.md
+      - Architecture: development/architecture.md
+  - Changelog: changelog.md
