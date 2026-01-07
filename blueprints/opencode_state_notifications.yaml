@@ -69,6 +69,7 @@ trigger:
     topic: "opencode/+/state"
     id: state_change
 
+# Initial variables that don't depend on entity state
 variables:
   # The new state from the MQTT payload
   new_state: "{{ trigger.payload }}"
@@ -78,38 +79,47 @@ variables:
   
   # Build the state_topic_base for entity lookup
   state_topic_base: "opencode/{{ device_id }}"
-  
-  # Find the device_id entity that has this state_topic_base in its attributes
-  device_id_entity: >
-    {% set ns = namespace(found='') %}
-    {% for entity in states.sensor %}
-      {% if entity.attributes.get('state_topic_base', '') == state_topic_base %}
-        {% set ns.found = entity.entity_id %}
-      {% endif %}
-    {% endfor %}
-    {{ ns.found }}
-  
-  # Check if we found the entity
-  entity_found: "{{ device_id_entity != '' }}"
-  
-  # Derive other entity IDs from the device_id entity (they share the same base)
-  entity_base: "{{ device_id_entity | replace('_device_id', '') if entity_found else '' }}"
-  state_entity: "{{ (entity_base ~ '_state') if entity_found else '' }}"
-  session_entity: "{{ (entity_base ~ '_session_title') if entity_found else '' }}"
-  
-  # Get values from entities (with defaults)
-  previous_state: "{{ state_attr(state_entity, 'previous_state') | default('unknown') if entity_found else 'unknown' }}"
-  project_name: "{{ state_attr(device_id_entity, 'device_name') | default('OpenCode') if entity_found else 'OpenCode' }}"
-  command_topic: "{{ state_attr(device_id_entity, 'command_topic') | default('') if entity_found else '' }}"
-  permission_id: "{{ state_attr(state_entity, 'permission_id') | default('') if entity_found else '' }}"
-  permission_title: "{{ state_attr(state_entity, 'permission_title') | default('Permission needed') if entity_found else 'Permission needed' }}"
-  error_message: "{{ state_attr(state_entity, 'error_message') | default('An error occurred') if entity_found else 'An error occurred' }}"
-  session_title: "{{ states(session_entity) | default('Task finished') if entity_found else 'Task finished' }}"
-  
-  # Determine if this is a transition we care about
-  was_working: "{{ previous_state == 'working' }}"
 
 action:
+  # Small delay to ensure HA has processed the attributes MQTT message
+  # (attributes are published before state, but HA processes them async)
+  - delay:
+      milliseconds: 100
+
+  # Set variables after delay to get fresh entity state
+  - variables:
+      # Find the device_id entity that has this state_topic_base in its attributes
+      device_id_entity: >
+        {% set ns = namespace(found='') %}
+        {% for entity in states.sensor %}
+          {% if entity.attributes.get('state_topic_base', '') == state_topic_base %}
+            {% set ns.found = entity.entity_id %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.found }}
+      
+      # Check if we found the entity
+      entity_found: "{{ device_id_entity != '' }}"
+      
+      # Derive other entity IDs from the device_id entity (they share the same base)
+      entity_base: "{{ device_id_entity | replace('_device_id', '') if entity_found else '' }}"
+      state_entity: "{{ (entity_base ~ '_state') if entity_found else '' }}"
+      session_entity: "{{ (entity_base ~ '_session_title') if entity_found else '' }}"
+      
+      # Get values from entities (with defaults)
+      # Use "or" to handle both undefined and null/None values
+      previous_state: "{{ (state_attr(state_entity, 'previous_state') or 'unknown') if entity_found else 'unknown' }}"
+      project_name: "{{ (state_attr(device_id_entity, 'device_name') or 'OpenCode') if entity_found else 'OpenCode' }}"
+      command_topic: "{{ (state_attr(device_id_entity, 'command_topic') or '') if entity_found else '' }}"
+      permission_id: "{{ (state_attr(state_entity, 'permission_id') or '') if entity_found else '' }}"
+      permission_title: "{{ (state_attr(state_entity, 'permission_title') or 'Permission needed') if entity_found else 'Permission needed' }}"
+      error_message: "{{ (state_attr(state_entity, 'error_message') or 'An error occurred') if entity_found else 'An error occurred' }}"
+      session_title: "{{ (states(session_entity) or 'Task finished') if entity_found else 'Task finished' }}"
+      
+      # Determine if this is a transition we care about
+      was_working: "{{ previous_state == 'working' }}"
+
+  # Continue with actions
   # Log for debugging (can be removed later)
   - service: system_log.write
     data:

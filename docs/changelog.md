@@ -4,6 +4,13 @@ All notable changes to the OpenCode Home Assistant Plugin will be documented her
 
 ## [Unreleased]
 
+## [0.1.3] - 2025-01-07
+
+### Fixed
+- Blueprint now correctly reads `previous_state` attribute by adding delay for HA to process MQTT attributes
+- Fixed `previous_state` returning null instead of triggering default value (use `or` instead of `| default()`)
+- Variables are now set after delay to ensure fresh entity state is read
+
 ## [0.1.2] - 2025-01-07
 
 ### Fixed
