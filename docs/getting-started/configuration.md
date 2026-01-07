@@ -61,10 +61,10 @@ Add your configuration to `opencode.json` in your project root, or to the global
 You can also configure MQTT credentials via environment variables:
 
 ```bash
-export MQTT_HOST=your-broker.local
-export MQTT_PORT=1883
-export MQTT_USERNAME=user
-export MQTT_PASSWORD=secret
+export OPENCODE_MQTT_HOST=your-broker.local
+export OPENCODE_MQTT_PORT=1883
+export OPENCODE_MQTT_USERNAME=user
+export OPENCODE_MQTT_PASSWORD=secret
 ```
 
 Environment variables take precedence over configuration file values for sensitive data.

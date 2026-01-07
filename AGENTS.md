@@ -27,10 +27,10 @@ Then add `"ha-opencode"` to the `plugins` array in `~/.config/opencode/opencode.
 Supports both environment variables and JSON config in `opencode.json`:
 
 **Environment Variables:**
-- `MQTT_HOST` - broker hostname (default: localhost)
-- `MQTT_PORT` - broker port (default: 1883)
-- `MQTT_USERNAME` / `MQTT_PASSWORD` - authentication (optional)
-- `HA_DISCOVERY_PREFIX` - Home Assistant discovery prefix (default: homeassistant)
+- `OPENCODE_MQTT_HOST` - broker hostname (default: localhost)
+- `OPENCODE_MQTT_PORT` - broker port (default: 1883)
+- `OPENCODE_MQTT_USERNAME` / `OPENCODE_MQTT_PASSWORD` - authentication (optional)
+- `OPENCODE_HA_DISCOVERY_PREFIX` - Home Assistant discovery prefix (default: homeassistant)
 
 **JSON Config (in opencode.json):**
 ```json

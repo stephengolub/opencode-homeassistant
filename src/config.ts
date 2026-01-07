@@ -36,14 +36,14 @@ export function loadConfig(jsonConfig?: JsonConfig): PluginConfig {
   // Env vars take precedence over JSON config
   return {
     mqtt: {
-      host: process.env.MQTT_HOST || jsonConfig?.mqtt?.host || "localhost",
-      port: parseInt(process.env.MQTT_PORT || String(jsonConfig?.mqtt?.port || 1883), 10),
-      username: process.env.MQTT_USERNAME || jsonConfig?.mqtt?.username,
-      password: process.env.MQTT_PASSWORD || jsonConfig?.mqtt?.password,
-      clientId: process.env.MQTT_CLIENT_ID || jsonConfig?.mqtt?.clientId || `opencode-${hostname}-${timestamp}`,
+      host: process.env.OPENCODE_MQTT_HOST || jsonConfig?.mqtt?.host || "localhost",
+      port: parseInt(process.env.OPENCODE_MQTT_PORT || String(jsonConfig?.mqtt?.port || 1883), 10),
+      username: process.env.OPENCODE_MQTT_USERNAME || jsonConfig?.mqtt?.username,
+      password: process.env.OPENCODE_MQTT_PASSWORD || jsonConfig?.mqtt?.password,
+      clientId: process.env.OPENCODE_MQTT_CLIENT_ID || jsonConfig?.mqtt?.clientId || `opencode-${hostname}-${timestamp}`,
     },
     ha: {
-      discoveryPrefix: process.env.HA_DISCOVERY_PREFIX || jsonConfig?.ha?.discoveryPrefix || "homeassistant",
+      discoveryPrefix: process.env.OPENCODE_HA_DISCOVERY_PREFIX || jsonConfig?.ha?.discoveryPrefix || "homeassistant",
     },
   };
 }

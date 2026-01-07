@@ -9,12 +9,12 @@ describe("loadConfig", () => {
     vi.resetModules();
     process.env = { ...originalEnv };
     // Clear relevant env vars
-    delete process.env.MQTT_HOST;
-    delete process.env.MQTT_PORT;
-    delete process.env.MQTT_USERNAME;
-    delete process.env.MQTT_PASSWORD;
-    delete process.env.MQTT_CLIENT_ID;
-    delete process.env.HA_DISCOVERY_PREFIX;
+    delete process.env.OPENCODE_MQTT_HOST;
+    delete process.env.OPENCODE_MQTT_PORT;
+    delete process.env.OPENCODE_MQTT_USERNAME;
+    delete process.env.OPENCODE_MQTT_PASSWORD;
+    delete process.env.OPENCODE_MQTT_CLIENT_ID;
+    delete process.env.OPENCODE_HA_DISCOVERY_PREFIX;
     delete process.env.HOSTNAME;
   });
 
@@ -91,12 +91,12 @@ describe("loadConfig", () => {
 
   describe("environment variables", () => {
     it("should use environment variables", () => {
-      process.env.MQTT_HOST = "env.mqtt.local";
-      process.env.MQTT_PORT = "9883";
-      process.env.MQTT_USERNAME = "envuser";
-      process.env.MQTT_PASSWORD = "envpass";
-      process.env.MQTT_CLIENT_ID = "env-client";
-      process.env.HA_DISCOVERY_PREFIX = "custom_ha";
+      process.env.OPENCODE_MQTT_HOST = "env.mqtt.local";
+      process.env.OPENCODE_MQTT_PORT = "9883";
+      process.env.OPENCODE_MQTT_USERNAME = "envuser";
+      process.env.OPENCODE_MQTT_PASSWORD = "envpass";
+      process.env.OPENCODE_MQTT_CLIENT_ID = "env-client";
+      process.env.OPENCODE_HA_DISCOVERY_PREFIX = "custom_ha";
 
       const config = loadConfig();
 
@@ -109,8 +109,8 @@ describe("loadConfig", () => {
     });
 
     it("should override JSON config with environment variables", () => {
-      process.env.MQTT_HOST = "env-override.local";
-      process.env.MQTT_PORT = "7777";
+      process.env.OPENCODE_MQTT_HOST = "env-override.local";
+      process.env.OPENCODE_MQTT_PORT = "7777";
 
       const jsonConfig: JsonConfig = {
         mqtt: {
@@ -134,7 +134,7 @@ describe("loadConfig", () => {
     });
 
     it("should handle non-numeric port gracefully", () => {
-      process.env.MQTT_PORT = "invalid";
+      process.env.OPENCODE_MQTT_PORT = "invalid";
 
       const config = loadConfig();
 

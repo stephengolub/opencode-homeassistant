@@ -38,11 +38,11 @@ Add `"ha-opencode"` to the `plugins` array in `~/.config/opencode/opencode.json`
 Via environment variables:
 
 ```bash
-export MQTT_HOST=your-mqtt-broker.local
-export MQTT_PORT=1883
-export MQTT_USERNAME=optional-username
-export MQTT_PASSWORD=optional-password
-export HA_DISCOVERY_PREFIX=homeassistant  # default
+export OPENCODE_MQTT_HOST=your-mqtt-broker.local
+export OPENCODE_MQTT_PORT=1883
+export OPENCODE_MQTT_USERNAME=optional-username
+export OPENCODE_MQTT_PASSWORD=optional-password
+export OPENCODE_HA_DISCOVERY_PREFIX=homeassistant  # default
 ```
 
 Or via `opencode.json`:
