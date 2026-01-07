@@ -1,0 +1,33 @@
+# Source files (dist is published)
+src/
+tests/
+
+# Config files
+tsconfig.json
+vitest.config.ts
+.gitlab-ci.yml
+mkdocs.yml
+
+# Documentation (available online)
+docs/
+
+# Development
+.git/
+.gitignore
+.claude/
+coverage/
+node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Misc
+*.log
+*.tgz
