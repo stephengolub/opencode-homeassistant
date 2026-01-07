@@ -21,26 +21,61 @@ trigger:
   - platform: event
     event_type: mobile_app_notification_action
 
-condition:
-  - condition: template
-    value_template: >
-      {{ trigger.event.data.action is defined and
-         (trigger.event.data.action.startswith('OPENCODE_APPROVE_') or
-          trigger.event.data.action.startswith('OPENCODE_REJECT_')) }}
-
 variables:
-  is_approve: "{{ trigger.event.data.action.startswith('OPENCODE_APPROVE_') }}"
+  # Get the action string
+  action: "{{ trigger.event.data.action | default('') }}"
+  
+  # Check if this is an OpenCode action
+  is_opencode_action: >
+    {{ action.startswith('OPENCODE_APPROVE_') or action.startswith('OPENCODE_REJECT_') }}
+  
+  is_approve: "{{ action.startswith('OPENCODE_APPROVE_') }}"
   response: "{{ 'once' if is_approve else 'reject' }}"
-  # Get data passed from the notification (works for both iOS and Android)
-  action_data: "{{ trigger.event.data.action_data | default(trigger.event.data.data | default({})) }}"
+  
+  # Get data passed from the notification
+  # iOS uses action_data, Android might use data directly
+  action_data: >
+    {% if trigger.event.data.action_data is defined %}
+      {{ trigger.event.data.action_data }}
+    {% elif trigger.event.data.data is defined %}
+      {{ trigger.event.data.data }}
+    {% else %}
+      {}
+    {% endif %}
+  
   command_topic: "{{ action_data.command_topic | default('') }}"
   permission_id: "{{ action_data.permission_id | default('') }}"
+  device_id: "{{ action_data.device_id | default('') }}"
+
+condition:
+  - condition: template
+    value_template: "{{ is_opencode_action }}"
 
 action:
+  # Log for debugging
+  - service: system_log.write
+    data:
+      message: >
+        OpenCode permission response: action={{ action }}, is_approve={{ is_approve }}, 
+        response={{ response }}, command_topic={{ command_topic }}, 
+        permission_id={{ permission_id }}, device_id={{ device_id }},
+        action_data={{ action_data }}
+      level: info
+      logger: ha-opencode.permission
+
+  # Check we have required data before publishing
   - condition: template
     value_template: "{{ command_topic != '' and permission_id != '' }}"
+
   - service: mqtt.publish
     data:
       topic: "{{ command_topic }}"
       payload: >
         {"command": "permission_response", "permission_id": "{{ permission_id }}", "response": "{{ response }}"}
+
+  # Log success
+  - service: system_log.write
+    data:
+      message: "OpenCode permission {{ response }} sent for {{ permission_id }}"
+      level: info
+      logger: ha-opencode.permission

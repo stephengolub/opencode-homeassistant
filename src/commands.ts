@@ -16,7 +16,25 @@ interface PermissionCommand {
 interface PromptCommand {
   command: "prompt";
   text: string;
+  agent?: string; // Optional, uses default agent if not provided
   session_id?: string; // Optional, uses current session if not provided
+}
+
+interface GetAgentsCommand {
+  command: "get_agents";
+  request_id?: string;
+}
+
+interface AgentInfo {
+  name: string;
+  description?: string;
+  mode: "subagent" | "primary" | "all";
+}
+
+interface AgentsResponse {
+  type: "agents";
+  request_id?: string;
+  agents: AgentInfo[];
 }
 
 interface GetHistoryCommand {
@@ -144,6 +162,9 @@ export class CommandHandler {
       case "cleanup_stale_sessions":
         await this.handleCleanup(command as unknown as CleanupCommand);
         break;
+      case "get_agents":
+        await this.handleGetAgents(command as unknown as GetAgentsCommand);
+        break;
       default:
         notify("Unknown Command", `Unrecognized: ${command.command}`);
     }
@@ -181,12 +202,14 @@ export class CommandHandler {
       return;
     }
 
-    notify("Prompt Received", command.text.substring(0, 50) + (command.text.length > 50 ? "..." : ""));
+    const agentInfo = command.agent ? ` [${command.agent}]` : "";
+    notify("Prompt Received", command.text.substring(0, 50) + (command.text.length > 50 ? "..." : "") + agentInfo);
 
     try {
       await this.client.session.prompt({
         path: { id: sessionId },
         body: {
+          agent: command.agent,
           parts: [{ type: "text", text: command.text }],
         },
       });
@@ -194,6 +217,36 @@ export class CommandHandler {
       const errorMsg = err instanceof Error ? err.message : "Unknown error";
       notify("Prompt Failed", errorMsg);
       console.error("[ha-opencode] Failed to send prompt:", err);
+    }
+  }
+
+  private async handleGetAgents(command: GetAgentsCommand): Promise<void> {
+    try {
+      const result = await this.client.app.agents();
+      
+      if (!result.data) {
+        notify("Agents Error", "No agents data returned");
+        return;
+      }
+
+      const agents: AgentInfo[] = result.data.map(agent => ({
+        name: agent.name,
+        description: agent.description,
+        mode: agent.mode,
+      }));
+
+      const response: AgentsResponse = {
+        type: "agents",
+        request_id: command.request_id,
+        agents,
+      };
+
+      await this.mqtt.publish(this.discovery.getResponseTopic(), response, false);
+      notify("Agents Sent", `${agents.length} agents`);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Unknown error";
+      notify("Agents Failed", errorMsg);
+      console.error("[ha-opencode] Failed to fetch agents:", err);
     }
   }
 
@@ -283,8 +336,9 @@ export class CommandHandler {
       const info = msg.info;
       const parts = msg.parts || [];
 
-      // Get timestamp from the message - use created or updated time
-      const timestamp = info.time?.created || new Date().toISOString();
+      // Get timestamp from the message - time.created is a Unix timestamp in milliseconds
+      const createdMs = info.time?.created;
+      const timestamp = createdMs ? new Date(createdMs).toISOString() : new Date().toISOString();
       const msgDate = new Date(timestamp);
 
       // Filter by since date if provided
@@ -327,7 +381,7 @@ export class CommandHandler {
       const historyMsg: HistoryMessage = {
         id: info.id,
         role: info.role as "user" | "assistant",
-        timestamp: String(timestamp),
+        timestamp,
         parts: historyParts,
       };
 

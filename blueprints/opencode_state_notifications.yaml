@@ -14,14 +14,13 @@ blueprint:
   author: ha-opencode
   source_url: https://github.com/your-repo/ha-opencode/blob/main/blueprints/opencode_state_notifications.yaml
   input:
-    notify_device:
-      name: Notification Target
+    notify_service:
+      name: Notification Service
       description: >
-        The mobile device to send notifications to.
-        Select your phone from the list (e.g., mobile_app_your_phone).
+        The notification service to use (e.g., notify.mobile_app_your_phone).
       selector:
-        device:
-          integration: mobile_app
+        text:
+      default: "notify.mobile_app_phone"
     
     notify_on_complete:
       name: Notify on Task Complete
@@ -68,112 +67,125 @@ max_exceeded: silent
 trigger:
   - platform: mqtt
     topic: "opencode/+/state"
+    id: state_change
 
 variables:
-  # Extract the state topic base from the trigger
-  state_topic_base: "{{ trigger.topic | replace('/state', '') }}"
+  # The new state from the MQTT payload
+  new_state: "{{ trigger.payload }}"
+  
+  # Extract device_id from topic: opencode/{device_id}/state
+  device_id: "{{ trigger.topic.split('/')[1] }}"
+  
+  # Build the state_topic_base for entity lookup
+  state_topic_base: "opencode/{{ device_id }}"
   
   # Find the device_id entity that has this state_topic_base in its attributes
   device_id_entity: >
-    {{ states.sensor | selectattr('attributes.state_topic_base', 'defined')
-       | selectattr('attributes.state_topic_base', 'eq', state_topic_base)
-       | map(attribute='entity_id') | first | default('') }}
-  
-  # Derive other entity IDs from the device_id entity
-  entity_base: "{{ device_id_entity | replace('_device_id', '') }}"
-  state_entity: "{{ entity_base }}_state"
-  permission_entity: "{{ entity_base }}_permission"
-  session_entity: "{{ entity_base }}_session_title"
-  
-  # Get values from entities
-  previous_state: "{{ state_attr(state_entity, 'previous_state') }}"
-  project_name: "{{ state_attr(device_id_entity, 'device_name') | default('OpenCode') }}"
-  command_topic: "{{ state_attr(device_id_entity, 'command_topic') }}"
-  device_id: "{{ states(device_id_entity) }}"
-  
-  # Get the notify service for the selected device
-  notify_service: >
-    {% set device_id = device_id(trigger.event.data.device_id if trigger.event is defined else '') %}
-    {% for service in integration_entities('mobile_app') %}
-      {% if device_id(service) == device_id %}
-        notify.{{ service | replace('device_tracker.', '') }}
+    {% set ns = namespace(found='') %}
+    {% for entity in states.sensor %}
+      {% if entity.attributes.get('state_topic_base', '') == state_topic_base %}
+        {% set ns.found = entity.entity_id %}
       {% endif %}
     {% endfor %}
-
-condition:
-  - condition: template
-    value_template: >
-      {{ device_id_entity != ''
-         and trigger.payload in ['idle', 'waiting_permission', 'error']
-         and previous_state == 'working' }}
+    {{ ns.found }}
+  
+  # Check if we found the entity
+  entity_found: "{{ device_id_entity != '' }}"
+  
+  # Derive other entity IDs from the device_id entity (they share the same base)
+  entity_base: "{{ device_id_entity | replace('_device_id', '') if entity_found else '' }}"
+  state_entity: "{{ (entity_base ~ '_state') if entity_found else '' }}"
+  session_entity: "{{ (entity_base ~ '_session_title') if entity_found else '' }}"
+  
+  # Get values from entities (with defaults)
+  previous_state: "{{ state_attr(state_entity, 'previous_state') | default('unknown') if entity_found else 'unknown' }}"
+  project_name: "{{ state_attr(device_id_entity, 'device_name') | default('OpenCode') if entity_found else 'OpenCode' }}"
+  command_topic: "{{ state_attr(device_id_entity, 'command_topic') | default('') if entity_found else '' }}"
+  permission_id: "{{ state_attr(state_entity, 'permission_id') | default('') if entity_found else '' }}"
+  permission_title: "{{ state_attr(state_entity, 'permission_title') | default('Permission needed') if entity_found else 'Permission needed' }}"
+  error_message: "{{ state_attr(state_entity, 'error_message') | default('An error occurred') if entity_found else 'An error occurred' }}"
+  session_title: "{{ states(session_entity) | default('Task finished') if entity_found else 'Task finished' }}"
+  
+  # Determine if this is a transition we care about
+  was_working: "{{ previous_state == 'working' }}"
 
 action:
+  # Log for debugging (can be removed later)
+  - service: system_log.write
+    data:
+      message: >
+        OpenCode notification trigger: new_state={{ new_state }}, previous_state={{ previous_state }}, 
+        device_id={{ device_id }}, entity_found={{ entity_found }}, was_working={{ was_working }}
+      level: info
+      logger: ha-opencode.blueprint
+
   - choose:
-      # Permission Required
+      # Permission Required (always notify, regardless of previous state)
       - conditions:
           - condition: template
-            value_template: "{{ trigger.payload == 'waiting_permission' }}"
+            value_template: "{{ new_state == 'waiting_permission' }}"
           - condition: template
             value_template: !input notify_on_permission
         sequence:
           # Small delay to let permission attributes arrive
           - delay:
               milliseconds: 500
-          - device_id: !input notify_device
-            domain: mobile_app
-            type: notify
-            title: "OpenCode: Permission Required"
-            message: "{{ state_attr(permission_entity, 'title') | default('Permission needed') }}"
+          - service: !input notify_service
             data:
-              tag: "opencode-permission-{{ device_id }}"
-              channel: !input notification_channel
-              importance: high
-              priority: high
-              ttl: 0
-              clickAction: !input dashboard_path
-              url: !input dashboard_path
-              actions:
-                - action: "OPENCODE_APPROVE_{{ device_id }}"
-                  title: "Approve"
-                - action: "OPENCODE_REJECT_{{ device_id }}"
-                  title: "Reject"
-              # Pass data needed for permission response
-              action_data:
-                device_id: "{{ device_id }}"
-                permission_id: "{{ state_attr(permission_entity, 'permission_id') }}"
-                command_topic: "{{ command_topic }}"
+              title: "OpenCode: Permission Required"
+              message: "{{ project_name }}: {{ permission_title }}"
+              data:
+                tag: "opencode-permission-{{ device_id }}"
+                channel: !input notification_channel
+                importance: high
+                priority: high
+                ttl: 0
+                clickAction: !input dashboard_path
+                url: !input dashboard_path
+                actions:
+                  - action: "OPENCODE_APPROVE_{{ device_id }}"
+                    title: "Approve"
+                  - action: "OPENCODE_REJECT_{{ device_id }}"
+                    title: "Reject"
+                # Pass data needed for permission response
+                action_data:
+                  device_id: "{{ device_id }}"
+                  permission_id: "{{ permission_id }}"
+                  command_topic: "{{ command_topic }}"
 
-      # Error Occurred
+      # Error Occurred (only after working)
       - conditions:
           - condition: template
-            value_template: "{{ trigger.payload == 'error' }}"
+            value_template: "{{ new_state == 'error' and was_working }}"
           - condition: template
             value_template: !input notify_on_error
         sequence:
-          - device_id: !input notify_device
-            domain: mobile_app
-            type: notify
-            title: "OpenCode: Error"
-            message: "{{ project_name }}: {{ state_attr(state_entity, 'error_message') | default('An error occurred') }}"
+          - service: !input notify_service
             data:
-              tag: "opencode-error-{{ device_id }}"
-              channel: !input notification_channel
-              importance: high
-              priority: high
-              ttl: 0
+              title: "OpenCode: Error"
+              message: "{{ project_name }}: {{ error_message }}"
+              data:
+                tag: "opencode-error-{{ device_id }}"
+                channel: !input notification_channel
+                importance: high
+                priority: high
+                ttl: 0
+                clickAction: !input dashboard_path
+                url: !input dashboard_path
 
       # Work Complete (idle after working)
       - conditions:
           - condition: template
-            value_template: "{{ trigger.payload == 'idle' }}"
+            value_template: "{{ new_state == 'idle' and was_working }}"
           - condition: template
             value_template: !input notify_on_complete
         sequence:
-          - device_id: !input notify_device
-            domain: mobile_app
-            type: notify
-            title: "OpenCode: Task Complete"
-            message: "{{ project_name }}: {{ states(session_entity) | default('Task finished') }}"
+          - service: !input notify_service
             data:
-              tag: "opencode-complete-{{ device_id }}"
-              channel: !input notification_channel
+              title: "OpenCode: Task Complete"
+              message: "{{ project_name }}: {{ session_title }}"
+              data:
+                tag: "opencode-complete-{{ device_id }}"
+                channel: !input notification_channel
+                clickAction: !input dashboard_path
+                url: !input dashboard_path

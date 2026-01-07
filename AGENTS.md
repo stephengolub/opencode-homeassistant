@@ -253,3 +253,68 @@ npm run build
 ### Kitty notifications not working
 - Ensure terminal supports OSC 99 (Kitty, iTerm2)
 - Check that stdout is a TTY
+
+## HACS Compatibility (Future Work)
+
+The HA card in `ha-card/` is not currently HACS-compatible. HACS (Home Assistant Community Store) requires specific repository structure for custom Lovelace cards.
+
+### Current Structure Problem
+
+HACS expects the card to be at the **root of a repository**, not in a subdirectory. Our current structure has the card nested in `ha-card/`.
+
+### Recommended Solution: Separate Repository
+
+Create a new repo (e.g., `opencode-card` or `lovelace-opencode-card`) containing only the card:
+
+```
+opencode-card/              # New separate repo
+├── dist/
+│   └── opencode-card.js    # HACS looks here first
+├── src/
+│   └── opencode-card.ts
+├── hacs.json               # Required for HACS
+├── README.md
+├── LICENSE
+└── package.json
+```
+
+### Required Files for HACS
+
+**hacs.json:**
+```json
+{
+  "name": "OpenCode Card",
+  "render_readme": true,
+  "filename": "opencode-card.js"
+}
+```
+
+### HACS Requirements
+
+| Item | Required | Description |
+|------|----------|-------------|
+| `hacs.json` | Yes | HACS configuration file |
+| `dist/opencode-card.js` | Yes | Built card file in `dist/` folder |
+| File naming | Yes | File must match repo name (minus `lovelace-` prefix) |
+| `README.md` | Recommended | Displayed in HACS UI |
+| GitHub Releases | Recommended | Enables version selection in HACS |
+| `LICENSE` | Recommended | Required for HACS default repos |
+
+### Naming Convention
+
+If the repo is named `lovelace-opencode-card`, HACS will look for `opencode-card.js` (strips the `lovelace-` prefix).
+
+### GitHub Releases
+
+For proper HACS versioning, create GitHub releases with the built `opencode-card.js` attached as a release asset. Consider a GitHub Action workflow that:
+1. Builds the card on release tag
+2. Attaches `opencode-card.js` to the release assets
+
+### Alternative: Reorganize This Repo
+
+Less recommended, but possible: make the card the primary focus and move the plugin to a subdirectory. This is non-standard and makes the plugin harder to install via npm.
+
+### Reference
+
+- HACS Plugin docs: https://hacs.xyz/docs/publish/plugin
+- Boilerplate card template: https://github.com/custom-cards/boilerplate-card
