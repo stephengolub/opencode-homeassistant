@@ -1,0 +1,38 @@
+{
+  "name": "ha-opencode",
+  "version": "0.1.0",
+  "description": "OpenCode plugin for Home Assistant integration via MQTT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "keywords": [
+    "opencode",
+    "home-assistant",
+    "mqtt",
+    "plugin"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "mqtt": "^5.10.0",
+    "source-map-support": "^0.5.21"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.0.23",
+    "@types/node": "^22.0.0",
+    "@types/source-map-support": "^0.5.10",
+    "@vitest/coverage-v8": "^4.0.16",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.16"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.0.0"
+  }
+}
