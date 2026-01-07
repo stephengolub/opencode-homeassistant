@@ -4,6 +4,15 @@ All notable changes to the OpenCode Home Assistant Plugin will be documented her
 
 ## [Unreleased]
 
+## [0.1.2] - 2025-01-07
+
+### Fixed
+- Session resumption now properly updates Home Assistant dashboard
+- Plugin re-initializes when switching to a different session, ensuring entities reflect the current session state
+- Previous session is marked unavailable before switching to a new session
+
+## [0.1.1] - 2025-01-07
+
 ### Added
 - MkDocs documentation with versioning support
 - GitLab Pages deployment for documentation

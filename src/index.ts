@@ -110,6 +110,16 @@ export const HomeAssistantPlugin: Plugin = async (input) => {
       return;
     }
 
+    // Clean up previous session if switching to a different session
+    if (sessionInitialized && currentSessionId !== sessionId && discovery) {
+      try {
+        // Mark old session as unavailable before switching
+        await discovery.publishUnavailable();
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+
     currentSessionId = sessionId;
 
     // Create session-specific Discovery with session ID
@@ -186,8 +196,9 @@ export const HomeAssistantPlugin: Plugin = async (input) => {
       // Try to extract session ID from event
       const sessionId = getSessionIdFromEvent(event);
 
-      // Initialize session components on first session event
-      if (sessionId && !sessionInitialized) {
+      // Initialize session components when we get a new session ID
+      // This handles both first-time initialization and session resumption/switching
+      if (sessionId && (!sessionInitialized || currentSessionId !== sessionId)) {
         await initializeSession(sessionId);
       }
 
