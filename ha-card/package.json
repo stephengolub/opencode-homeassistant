@@ -1,8 +1,27 @@
 {
   "name": "opencode-card",
   "version": "0.1.0",
-  "description": "Home Assistant custom card for OpenCode sessions",
+  "description": "Home Assistant custom Lovelace card for OpenCode AI coding assistant sessions",
   "main": "dist/opencode-card.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stephengolub/lovelace-opencode-card.git"
+  },
+  "homepage": "https://github.com/stephengolub/lovelace-opencode-card#readme",
+  "bugs": {
+    "url": "https://github.com/stephengolub/lovelace-opencode-card/issues"
+  },
+  "keywords": [
+    "home-assistant",
+    "lovelace",
+    "custom-card",
+    "opencode",
+    "ai",
+    "mqtt",
+    "hacs"
+  ],
+  "author": "Stephen Golub",
+  "license": "MIT",
   "scripts": {
     "build": "esbuild src/opencode-card.ts --bundle --outfile=dist/opencode-card.js --format=esm --target=es2020 --minify",
     "dev": "esbuild src/opencode-card.ts --bundle --outfile=dist/opencode-card.js --format=esm --target=es2020 --watch"

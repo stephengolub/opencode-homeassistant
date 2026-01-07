@@ -254,65 +254,98 @@ npm run build
 - Ensure terminal supports OSC 99 (Kitty, iTerm2)
 - Check that stdout is a TTY
 
-## HACS Compatibility (Future Work)
+## Repository Split Plan
 
-The HA card in `ha-card/` is not currently HACS-compatible. HACS (Home Assistant Community Store) requires specific repository structure for custom Lovelace cards.
+The `ha-card/` directory is structured as a standalone project ready to be extracted to a separate repository for HACS compatibility.
 
-### Current Structure Problem
-
-HACS expects the card to be at the **root of a repository**, not in a subdirectory. Our current structure has the card nested in `ha-card/`.
-
-### Recommended Solution: Separate Repository
-
-Create a new repo (e.g., `opencode-card` or `lovelace-opencode-card`) containing only the card:
+### Current Structure
 
 ```
-opencode-card/              # New separate repo
-├── dist/
-│   └── opencode-card.js    # HACS looks here first
+ha-opencode/                    # This repo (OpenCode plugin)
+├── src/                        # Plugin source
+├── blueprints/                 # HA automation blueprints
+├── ha-card/                    # Card (ready to extract)
+│   ├── src/opencode-card.ts
+│   ├── dist/opencode-card.js
+│   ├── hacs.json              # HACS manifest (ready)
+│   ├── LICENSE                # MIT license (ready)
+│   ├── package.json           # Standalone package (ready)
+│   └── README.md              # Standalone docs (ready)
+└── ...
+```
+
+### Target Structure (After Split)
+
+**Plugin repo** (`opencode-homeassistant` or `ha-opencode`):
+```
+ha-opencode/
 ├── src/
-│   └── opencode-card.ts
-├── hacs.json               # Required for HACS
-├── README.md
+├── blueprints/
+├── package.json
+└── README.md
+```
+
+**Card repo** (`lovelace-opencode-card`):
+```
+lovelace-opencode-card/
+├── src/opencode-card.ts
+├── dist/opencode-card.js
+├── hacs.json
 ├── LICENSE
-└── package.json
+├── package.json
+├── README.md
+└── .github/workflows/release.yml   # Add during extraction
 ```
 
-### Required Files for HACS
+### Extraction Steps
 
-**hacs.json:**
-```json
-{
-  "name": "OpenCode Card",
-  "render_readme": true,
-  "filename": "opencode-card.js"
-}
-```
+When ready to split:
 
-### HACS Requirements
+1. Create new repo `lovelace-opencode-card` on GitHub
+2. Copy contents of `ha-card/` to new repo root
+3. Add GitHub Actions workflow for releases:
+   ```yaml
+   name: Release
+   on:
+     release:
+       types: [published]
+   jobs:
+     build:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v4
+         - uses: actions/setup-node@v4
+         - run: npm ci && npm run build
+         - name: Upload release asset
+           uses: actions/upload-release-asset@v1
+           with:
+             upload_url: ${{ github.event.release.upload_url }}
+             asset_path: ./dist/opencode-card.js
+             asset_name: opencode-card.js
+             asset_content_type: application/javascript
+   ```
+4. Create initial release
+5. Remove `ha-card/` from this repo
+6. Update this repo's README to link to card repo
+7. (Optional) Submit card repo to HACS default repositories
 
-| Item | Required | Description |
-|------|----------|-------------|
-| `hacs.json` | Yes | HACS configuration file |
-| `dist/opencode-card.js` | Yes | Built card file in `dist/` folder |
-| File naming | Yes | File must match repo name (minus `lovelace-` prefix) |
-| `README.md` | Recommended | Displayed in HACS UI |
-| GitHub Releases | Recommended | Enables version selection in HACS |
-| `LICENSE` | Recommended | Required for HACS default repos |
+### HACS Compatibility
 
-### Naming Convention
+The `ha-card/` directory already contains all required files for HACS:
 
-If the repo is named `lovelace-opencode-card`, HACS will look for `opencode-card.js` (strips the `lovelace-` prefix).
+| File | Status | Description |
+|------|--------|-------------|
+| `hacs.json` | Ready | HACS manifest |
+| `dist/opencode-card.js` | Ready | Built card |
+| `LICENSE` | Ready | MIT license |
+| `README.md` | Ready | Standalone documentation |
+| `package.json` | Ready | Points to future repo URL |
 
-### GitHub Releases
+### Versioning
 
-For proper HACS versioning, create GitHub releases with the built `opencode-card.js` attached as a release asset. Consider a GitHub Action workflow that:
-1. Builds the card on release tag
-2. Attaches `opencode-card.js` to the release assets
-
-### Alternative: Reorganize This Repo
-
-Less recommended, but possible: make the card the primary focus and move the plugin to a subdirectory. This is non-standard and makes the plugin harder to install via npm.
+The card and plugin are versioned independently:
+- Plugin version: in root `package.json`
+- Card version: in `ha-card/package.json`
 
 ### Reference
 

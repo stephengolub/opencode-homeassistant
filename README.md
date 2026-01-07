@@ -249,6 +249,8 @@ A custom Lovelace card is included for displaying OpenCode sessions in Home Assi
 
 See [ha-card/README.md](ha-card/README.md) for installation and usage instructions.
 
+> **Note**: The card will be moved to a separate repository (`lovelace-opencode-card`) for HACS compatibility. The `ha-card/` directory is structured for easy extraction when that happens.
+
 ## Development
 
 ```bash
