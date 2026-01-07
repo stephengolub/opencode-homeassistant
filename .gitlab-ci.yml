@@ -104,7 +104,7 @@ build:
 .docs-base:
   image: python:${PYTHON_VERSION}-slim
   before_script:
-    - pip install mkdocs-material mike
+    - pip install mkdocs-material
   cache:
     key: docs-pip
     paths:
@@ -123,28 +123,58 @@ docs:build:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 
-# Deploy "latest" docs on merge to main
+# Deploy docs on merge to main (as "latest")
 pages:
   extends: .docs-base
   stage: docs
   script:
-    # Configure git for mike
-    - apt-get update && apt-get install -y git
-    - git config user.name "GitLab CI"
-    - git config user.email "ci@gitlab.com"
+    - apt-get update && apt-get install -y curl jq
     
-    # Fetch existing gh-pages branch if it exists
-    - git fetch origin gl-pages:gl-pages || true
+    # Build current docs
+    - mkdocs build --strict
     
-    # Deploy as "latest" version with mike
-    - mike deploy --push --update-aliases latest
-    - mike set-default latest
+    # Create public directory structure with versioning
+    - mkdir -p public/latest
+    - cp -r site/* public/latest/
     
-    # Copy to public for GitLab Pages
-    - mike deploy latest --branch gl-pages
-    - git checkout gl-pages
-    - mkdir -p public
-    - cp -r * public/ || true
+    # Try to fetch existing versions from Pages (if they exist)
+    # This preserves previously deployed versions
+    - |
+      if curl -sf "https://opencode-home-assistant.gitlab.io/opencode-plugin/versions.json" -o existing_versions.json 2>/dev/null; then
+        echo "Found existing versions.json"
+        # Download each existing version
+        for version in $(jq -r '.[] | select(.version != "latest") | .version' existing_versions.json); do
+          echo "Fetching existing version: $version"
+          mkdir -p "public/$version"
+          curl -sf "https://opencode-home-assistant.gitlab.io/opencode-plugin/$version/index.html" -o "public/$version/index.html" 2>/dev/null || true
+          # We can't easily fetch all files, so versioned docs will need to be rebuilt on release
+        done
+      fi
+    
+    # Create versions.json for version selector
+    - |
+      cat > public/versions.json << 'EOF'
+      [
+        {"version": "latest", "title": "latest", "aliases": ["latest"]}
+      ]
+      EOF
+    
+    # Create redirect from root to latest
+    - |
+      cat > public/index.html << 'EOF'
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Redirecting...</title>
+        <meta http-equiv="refresh" content="0; url=./latest/">
+        <link rel="canonical" href="./latest/">
+      </head>
+      <body>
+        <p>Redirecting to <a href="./latest/">latest documentation</a>...</p>
+      </body>
+      </html>
+      EOF
   artifacts:
     paths:
       - public
@@ -156,26 +186,73 @@ pages:release:
   extends: .docs-base
   stage: docs
   script:
-    # Configure git for mike
-    - apt-get update && apt-get install -y git
-    - git config user.name "GitLab CI"
-    - git config user.email "ci@gitlab.com"
+    - apt-get update && apt-get install -y curl jq
     
-    # Extract version from tag (v1.2.3 -> 1.2.3)
+    # Extract version from tag (v1.2.3 -> 1.2)
     - VERSION=${CI_COMMIT_TAG#v}
     - MAJOR_MINOR=$(echo $VERSION | cut -d. -f1,2)
+    - echo "Deploying docs for version $MAJOR_MINOR"
     
-    # Fetch existing gl-pages branch
-    - git fetch origin gl-pages:gl-pages || true
+    # Build docs for this version
+    - mkdocs build --strict
     
-    # Deploy this version and update latest alias
-    - mike deploy --push --update-aliases $MAJOR_MINOR latest
-    - mike set-default latest
+    # Create public directory
+    - mkdir -p public/latest
+    - mkdir -p "public/$MAJOR_MINOR"
     
-    # Copy to public for GitLab Pages
-    - git checkout gl-pages
-    - mkdir -p public
-    - cp -r * public/ || true
+    # Copy to both version and latest
+    - cp -r site/* "public/$MAJOR_MINOR/"
+    - cp -r site/* public/latest/
+    
+    # Try to fetch and merge with existing versions.json
+    - |
+      if curl -sf "https://opencode-home-assistant.gitlab.io/opencode-plugin/versions.json" -o existing_versions.json 2>/dev/null; then
+        echo "Found existing versions.json"
+        # Add new version if not already present
+        if ! jq -e ".[] | select(.version == \"$MAJOR_MINOR\")" existing_versions.json > /dev/null 2>&1; then
+          jq ". + [{\"version\": \"$MAJOR_MINOR\", \"title\": \"$MAJOR_MINOR\", \"aliases\": []}]" existing_versions.json > public/versions.json
+        else
+          cp existing_versions.json public/versions.json
+        fi
+        # Ensure latest is always first and points to this version
+        jq "map(if .version == \"latest\" then .aliases = [\"$MAJOR_MINOR\"] else . end) | sort_by(.version) | reverse" public/versions.json > tmp.json && mv tmp.json public/versions.json
+      else
+        # Create new versions.json
+        cat > public/versions.json << EOF
+      [
+        {"version": "latest", "title": "latest", "aliases": ["$MAJOR_MINOR"]},
+        {"version": "$MAJOR_MINOR", "title": "$MAJOR_MINOR", "aliases": []}
+      ]
+      EOF
+      fi
+    
+    # Create redirect from root to latest
+    - |
+      cat > public/index.html << 'EOF'
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Redirecting...</title>
+        <meta http-equiv="refresh" content="0; url=./latest/">
+        <link rel="canonical" href="./latest/">
+      </head>
+      <body>
+        <p>Redirecting to <a href="./latest/">latest documentation</a>...</p>
+      </body>
+      </html>
+      EOF
+    
+    # Try to preserve other existing versions by downloading them
+    - |
+      for version in $(jq -r '.[] | select(.version != "latest" and .version != "'"$MAJOR_MINOR"'") | .version' public/versions.json 2>/dev/null); do
+        echo "Attempting to preserve version: $version"
+        mkdir -p "public/$version"
+        # Download the version's index to check if it exists
+        if curl -sf "https://opencode-home-assistant.gitlab.io/opencode-plugin/$version/index.html" -o "public/$version/index.html" 2>/dev/null; then
+          echo "Version $version exists, but full preservation requires manual rebuild"
+        fi
+      done
   artifacts:
     paths:
       - public
@@ -213,6 +290,6 @@ release:
       npm install ha-opencode@${CI_COMMIT_TAG#v}
       ```
       
-      Documentation: https://opencode-home-assistant.gitlab.io/opencode-plugin/${CI_COMMIT_TAG#v}/
+      Documentation: https://opencode-home-assistant.gitlab.io/opencode-plugin/
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/

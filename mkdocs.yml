@@ -38,15 +38,10 @@ theme:
 
 plugins:
   - search
-  - mike:
-      alias_type: symlink
-      canonical_version: latest
-      version_selector: true
 
 extra:
   version:
     provider: mike
-    default: latest
   social:
     - icon: fontawesome/brands/gitlab
       link: https://gitlab.com/opencode-home-assistant/opencode-plugin
