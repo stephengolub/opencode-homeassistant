@@ -1,611 +1,447 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { StateTracker } from "../src/state.js";
-import type { Discovery } from "../src/discovery.js";
+import type { HAWebSocketClient } from "../src/websocket.js";
+import type { Event } from "@opencode-ai/sdk";
 
-// Mock Discovery with all required methods including updateDeviceName
-function createMockDiscovery(): Discovery {
-  return {
-    deviceId: "opencode_test",
-    registerDevice: vi.fn().mockResolvedValue(undefined),
-    updateDeviceName: vi.fn().mockResolvedValue(undefined),
-    publishDeviceInfo: vi.fn().mockResolvedValue(undefined),
-    publishState: vi.fn().mockResolvedValue(undefined),
-    publishAttributes: vi.fn().mockResolvedValue(undefined),
-    publishPermission: vi.fn().mockResolvedValue(undefined),
-    publishAvailable: vi.fn().mockResolvedValue(undefined),
-    publishUnavailable: vi.fn().mockResolvedValue(undefined),
-    getStateTopic: vi.fn((key: string) => `opencode/opencode_test/${key}`),
-    getAttributesTopic: vi.fn(
-      (key: string) => `opencode/opencode_test/${key}/attributes`
-    ),
-    getCommandTopic: vi.fn(() => "opencode/opencode_test/command"),
-    getResponseTopic: vi.fn(() => "opencode/opencode_test/response"),
-    getAvailabilityTopic: vi.fn(() => "opencode/opencode_test/availability"),
-    unregisterDevice: vi.fn().mockResolvedValue(undefined),
-  } as unknown as Discovery;
-}
+// Mock the os module
+vi.mock("os", () => ({
+  hostname: () => "test-host",
+}));
 
 describe("StateTracker", () => {
-  let discovery: Discovery;
   let stateTracker: StateTracker;
+  let mockWsClient: HAWebSocketClient;
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    discovery = createMockDiscovery();
-    stateTracker = new StateTracker(discovery);
+    mockWsClient = {
+      sendSessionUpdate: vi.fn().mockResolvedValue(undefined),
+      sendSessionRemoved: vi.fn().mockResolvedValue(undefined),
+      sendStateResponse: vi.fn().mockResolvedValue(undefined),
+      isConnected: vi.fn().mockReturnValue(true),
+      onCommand: vi.fn(),
+      onStateRequest: vi.fn(),
+      onDisconnect: vi.fn(),
+      connect: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      pair: vi.fn().mockResolvedValue({ success: true }),
+      reconnect: vi.fn().mockResolvedValue({ success: true }),
+    } as unknown as HAWebSocketClient;
+
+    stateTracker = new StateTracker(mockWsClient, "test-token", "test-project");
   });
 
-  describe("initialize", () => {
-    it("should register device and publish initial state on initialize", async () => {
-      await stateTracker.initialize();
-
-      expect(discovery.registerDevice).toHaveBeenCalled();
-      expect(discovery.publishDeviceInfo).toHaveBeenCalled();
-      expect(discovery.publishAvailable).toHaveBeenCalled();
-      expect(discovery.publishState).toHaveBeenCalledWith("state", "idle");
-      expect(discovery.publishPermission).toHaveBeenCalledWith(null);
-    });
-  });
-
-  describe("updateDeviceName", () => {
-    it("should update device name when valid title is received", async () => {
-      await stateTracker.initialize();
-      vi.clearAllMocks();
-
-      const event = {
-        type: "session.updated",
-        properties: {
-          info: {
-            id: "session-1",
-            title: "Implementing feature X",
-            projectID: "project-1",
-            time: { created: Date.now() },
-          },
-        },
-      };
-      await stateTracker.handleEvent(
-        event as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-
-      expect(discovery.updateDeviceName).toHaveBeenCalledWith(
-        "Implementing feature X"
-      );
+  describe("initial state", () => {
+    it("should start with no session ID", () => {
+      expect(stateTracker.getCurrentSessionId()).toBeNull();
     });
 
-    it("should not update device name for Untitled session", async () => {
-      await stateTracker.initialize();
-      vi.clearAllMocks();
-
-      const event = {
-        type: "session.updated",
-        properties: {
-          info: {
-            id: "session-1",
-            title: "Untitled",
-            projectID: "project-1",
-            time: { created: Date.now() },
-          },
-        },
-      };
-      await stateTracker.handleEvent(
-        event as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-
-      expect(discovery.updateDeviceName).not.toHaveBeenCalled();
+    it("should start with no pending permission", () => {
+      expect(stateTracker.getPendingPermission()).toBeNull();
     });
 
-    it("should only update device name once", async () => {
-      await stateTracker.initialize();
-      vi.clearAllMocks();
-
-      // First update with valid title
-      const event1 = {
-        type: "session.updated",
-        properties: {
-          info: {
-            id: "session-1",
-            title: "First Title",
-            projectID: "project-1",
-            time: { created: Date.now() },
-          },
-        },
-      };
-      await stateTracker.handleEvent(
-        event1 as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-
-      // Second update with different title
-      const event2 = {
-        type: "session.updated",
-        properties: {
-          info: {
-            id: "session-1",
-            title: "Second Title",
-            projectID: "project-1",
-            time: { created: Date.now() },
-          },
-        },
-      };
-      await stateTracker.handleEvent(
-        event2 as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-
-      // Should only be called once (for first valid title)
-      expect(discovery.updateDeviceName).toHaveBeenCalledTimes(1);
-      expect(discovery.updateDeviceName).toHaveBeenCalledWith("First Title");
+    it("should return empty sessions when no session exists", () => {
+      expect(stateTracker.getAllSessions()).toEqual([]);
     });
   });
 
-  describe("state transitions", () => {
-    beforeEach(async () => {
-      await stateTracker.initialize();
-      vi.clearAllMocks();
+  describe("setSessionId", () => {
+    it("should set the session ID", async () => {
+      await stateTracker.setSessionId("ses_123");
+      expect(stateTracker.getCurrentSessionId()).toBe("ses_123");
     });
 
-    it("should transition to working on text delta", async () => {
-      const event = {
+    it("should publish update when requested", async () => {
+      await stateTracker.setSessionId("ses_123", true);
+      expect(mockWsClient.sendSessionUpdate).toHaveBeenCalled();
+    });
+
+    it("should not publish update by default", async () => {
+      await stateTracker.setSessionId("ses_123");
+      expect(mockWsClient.sendSessionUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("getAllSessions", () => {
+    it("should return session data after session is set", async () => {
+      await stateTracker.setSessionId("ses_123");
+      const sessions = stateTracker.getAllSessions();
+      
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].session_id).toBe("ses_123");
+      expect(sessions[0].state).toBe("idle");
+      expect(sessions[0].hostname).toBe("test-host");
+    });
+  });
+
+  describe("session.created event", () => {
+    it("should set session ID and title", async () => {
+      const event: Event = {
+        type: "session.created",
+        properties: {
+          info: {
+            id: "ses_new123",
+            title: "Test Session",
+          },
+        },
+      } as Event;
+
+      await stateTracker.handleEvent(event);
+
+      expect(stateTracker.getCurrentSessionId()).toBe("ses_new123");
+      const sessions = stateTracker.getAllSessions();
+      expect(sessions[0].title).toBe("Test Session");
+    });
+
+    it("should reset tokens and cost", async () => {
+      // First set some values
+      await stateTracker.setSessionId("ses_old");
+      
+      const event: Event = {
+        type: "session.created",
+        properties: {
+          info: {
+            id: "ses_new123",
+            title: "New Session",
+          },
+        },
+      } as Event;
+
+      await stateTracker.handleEvent(event);
+
+      const sessions = stateTracker.getAllSessions();
+      expect(sessions[0].tokens_input).toBe(0);
+      expect(sessions[0].tokens_output).toBe(0);
+      expect(sessions[0].cost).toBe(0);
+    });
+
+    it("should remove old session when switching", async () => {
+      await stateTracker.setSessionId("ses_old");
+      
+      const event: Event = {
+        type: "session.created",
+        properties: {
+          info: {
+            id: "ses_new",
+            title: "New Session",
+          },
+        },
+      } as Event;
+
+      await stateTracker.handleEvent(event);
+
+      expect(mockWsClient.sendSessionRemoved).toHaveBeenCalledWith(
+        "test-token",
+        "ses_old"
+      );
+    });
+  });
+
+  describe("session.updated event", () => {
+    it("should update session title", async () => {
+      await stateTracker.setSessionId("ses_123");
+      
+      const event: Event = {
+        type: "session.updated",
+        properties: {
+          info: {
+            id: "ses_123",
+            title: "Updated Title",
+          },
+        },
+      } as Event;
+
+      await stateTracker.handleEvent(event);
+
+      const sessions = stateTracker.getAllSessions();
+      expect(sessions[0].title).toBe("Updated Title");
+    });
+  });
+
+  describe("session.idle event", () => {
+    it("should transition to idle state", async () => {
+      await stateTracker.setSessionId("ses_123");
+      
+      // First transition to working
+      const workingEvent: Event = {
         type: "message.part.updated",
         properties: {
-          part: {
-            type: "text",
-            text: "Hello",
-          },
-          delta: "Hello",
+          part: { type: "text" },
+          delta: "hello",
         },
-      };
+      } as unknown as Event;
+      await stateTracker.handleEvent(workingEvent);
 
-      await stateTracker.handleEvent(
-        event as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-
-      expect(discovery.publishState).toHaveBeenCalledWith("state", "working");
-    });
-
-    it("should transition to idle on session.idle", async () => {
-      // First go to working
-      const workingEvent = {
-        type: "message.part.updated",
-        properties: {
-          part: { type: "text", text: "Hi" },
-          delta: "Hi",
-        },
-      };
-      await stateTracker.handleEvent(
-        workingEvent as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-      vi.clearAllMocks();
-
-      // Then go idle
-      const idleEvent = {
+      // Now idle
+      const idleEvent: Event = {
         type: "session.idle",
         properties: {},
-      };
+      } as Event;
+      await stateTracker.handleEvent(idleEvent);
 
-      await stateTracker.handleEvent(
-        idleEvent as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-
-      expect(discovery.publishState).toHaveBeenCalledWith("state", "idle");
+      const sessions = stateTracker.getAllSessions();
+      expect(sessions[0].state).toBe("idle");
+      expect(sessions[0].current_tool).toBe("none");
     });
+  });
 
-    it("should transition to error on session.error", async () => {
-      const event = {
+  describe("session.error event", () => {
+    it("should transition to error state with message", async () => {
+      await stateTracker.setSessionId("ses_123");
+      
+      const event: Event = {
         type: "session.error",
         properties: {
-          error: {
-            name: "TestError",
-            message: "Something went wrong",
-          },
+          error: { message: "Something went wrong" },
         },
-      };
+      } as unknown as Event;
 
-      await stateTracker.handleEvent(
-        event as Parameters<typeof stateTracker.handleEvent>[0]
-      );
+      await stateTracker.handleEvent(event);
 
-      expect(discovery.publishState).toHaveBeenCalledWith("state", "error");
-      expect(discovery.publishAttributes).toHaveBeenCalledWith(
-        "state",
-        expect.objectContaining({
-          error_message: "Something went wrong",
-        })
-      );
-    });
-
-    it("should transition to waiting_permission on permission.updated", async () => {
-      const event = {
-        type: "permission.updated",
-        properties: {
-          id: "perm-1",
-          type: "file_write",
-          title: "Write to file.txt",
-          sessionID: "session-1",
-          messageID: "msg-1",
-          metadata: {},
-        },
-      };
-
-      await stateTracker.handleEvent(
-        event as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-
-      expect(discovery.publishState).toHaveBeenCalledWith(
-        "state",
-        "waiting_permission"
-      );
-      expect(discovery.publishPermission).toHaveBeenCalled();
+      const sessions = stateTracker.getAllSessions();
+      expect(sessions[0].state).toBe("error");
+      expect(sessions[0].error_message).toBe("Something went wrong");
     });
   });
 
-  describe("previous_state tracking", () => {
-    beforeEach(async () => {
-      await stateTracker.initialize();
-      vi.clearAllMocks();
-    });
-
-    it("should publish previous_state attribute when state changes", async () => {
-      // Go to working
-      const workingEvent = {
-        type: "message.part.updated",
-        properties: {
-          part: { type: "text", text: "Hi" },
-          delta: "Hi",
-        },
-      };
-      await stateTracker.handleEvent(
-        workingEvent as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-      vi.clearAllMocks();
-
-      // Go to idle - should have previous_state = "working"
-      const idleEvent = {
-        type: "session.idle",
-        properties: {},
-      };
-      await stateTracker.handleEvent(
-        idleEvent as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-
-      // Check that attributes were published with previous_state
-      expect(discovery.publishAttributes).toHaveBeenCalledWith(
-        "state",
-        expect.objectContaining({
-          previous_state: "working",
-        })
-      );
-    });
-  });
-
-  describe("agent tracking", () => {
-    beforeEach(async () => {
-      await stateTracker.initialize();
-      vi.clearAllMocks();
-    });
-
+  describe("message.updated event", () => {
     it("should track agent from user message", async () => {
-      const event = {
+      await stateTracker.setSessionId("ses_123");
+      
+      const event: Event = {
         type: "message.updated",
         properties: {
           info: {
-            id: "msg-1",
+            id: "msg_1",
             role: "user",
-            agent: "build",
-            sessionID: "session-1",
-            time: { created: Date.now() },
+            agent: "code",
           },
         },
-      };
+      } as unknown as Event;
 
-      await stateTracker.handleEvent(
-        event as Parameters<typeof stateTracker.handleEvent>[0]
-      );
+      await stateTracker.handleEvent(event);
 
-      expect(discovery.publishAttributes).toHaveBeenCalledWith(
-        "state",
-        expect.objectContaining({
-          agent: "build",
-        })
-      );
+      const sessions = stateTracker.getAllSessions();
+      expect(sessions[0].agent).toBe("code");
     });
 
-    it("should track current_agent from agent part", async () => {
-      const event = {
-        type: "message.part.updated",
+    it("should track model and tokens from assistant message", async () => {
+      await stateTracker.setSessionId("ses_123");
+      
+      const event: Event = {
+        type: "message.updated",
         properties: {
-          part: {
-            type: "agent",
-            name: "explore",
+          info: {
+            id: "msg_1",
+            role: "assistant",
+            providerID: "anthropic",
+            modelID: "claude-3",
+            tokens: { input: 100, output: 50 },
+            cost: 0.005,
           },
         },
-      };
+      } as unknown as Event;
 
-      await stateTracker.handleEvent(
-        event as Parameters<typeof stateTracker.handleEvent>[0]
-      );
+      await stateTracker.handleEvent(event);
 
-      expect(discovery.publishAttributes).toHaveBeenCalledWith(
-        "state",
-        expect.objectContaining({
-          current_agent: "explore",
-        })
-      );
+      const sessions = stateTracker.getAllSessions();
+      expect(sessions[0].model).toBe("anthropic/claude-3");
+      expect(sessions[0].tokens_input).toBe(100);
+      expect(sessions[0].tokens_output).toBe(50);
+      expect(sessions[0].cost).toBe(0.005);
     });
   });
 
-  describe("permission lifecycle", () => {
-    beforeEach(async () => {
-      await stateTracker.initialize();
-      vi.clearAllMocks();
+  describe("message.part.updated event", () => {
+    it("should transition to working on text delta", async () => {
+      await stateTracker.setSessionId("ses_123");
+      
+      const event: Event = {
+        type: "message.part.updated",
+        properties: {
+          part: { type: "text" },
+          delta: "Hello",
+        },
+      } as unknown as Event;
+
+      await stateTracker.handleEvent(event);
+
+      const sessions = stateTracker.getAllSessions();
+      expect(sessions[0].state).toBe("working");
     });
 
-    it("should transition to working after permission replied", async () => {
-      // First request permission
-      const permissionEvent = {
+    it("should track current agent from agent part", async () => {
+      await stateTracker.setSessionId("ses_123");
+      
+      const event: Event = {
+        type: "message.part.updated",
+        properties: {
+          part: { type: "agent", name: "explore" },
+        },
+      } as unknown as Event;
+
+      await stateTracker.handleEvent(event);
+
+      const sessions = stateTracker.getAllSessions();
+      expect(sessions[0].current_agent).toBe("explore");
+    });
+
+    it("should track running tool", async () => {
+      await stateTracker.setSessionId("ses_123");
+      
+      const event: Event = {
+        type: "message.part.updated",
+        properties: {
+          part: { 
+            type: "tool", 
+            tool: "bash",
+            state: { status: "running" },
+          },
+        },
+      } as unknown as Event;
+
+      await stateTracker.handleEvent(event);
+
+      const sessions = stateTracker.getAllSessions();
+      expect(sessions[0].current_tool).toBe("bash");
+      expect(sessions[0].state).toBe("working");
+    });
+
+    it("should clear tool when completed", async () => {
+      await stateTracker.setSessionId("ses_123");
+      
+      // Start tool
+      await stateTracker.handleEvent({
+        type: "message.part.updated",
+        properties: {
+          part: { 
+            type: "tool", 
+            tool: "bash",
+            state: { status: "running" },
+          },
+        },
+      } as unknown as Event);
+
+      // Complete tool
+      await stateTracker.handleEvent({
+        type: "message.part.updated",
+        properties: {
+          part: { 
+            type: "tool", 
+            tool: "bash",
+            state: { status: "completed" },
+          },
+        },
+      } as unknown as Event);
+
+      const sessions = stateTracker.getAllSessions();
+      expect(sessions[0].current_tool).toBe("none");
+    });
+  });
+
+  describe("permission.updated event", () => {
+    it("should transition to waiting_permission and track permission", async () => {
+      await stateTracker.setSessionId("ses_123");
+      
+      const event: Event = {
         type: "permission.updated",
         properties: {
-          id: "perm-1",
-          type: "file_write",
-          title: "Write to file.txt",
-          sessionID: "session-1",
-          messageID: "msg-1",
+          id: "perm_1",
+          type: "file",
+          title: "Read file",
+          sessionID: "ses_123",
+          messageID: "msg_1",
+          callID: "call_1",
+          pattern: "*.ts",
           metadata: {},
         },
-      };
-      await stateTracker.handleEvent(
-        permissionEvent as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-      vi.clearAllMocks();
+      } as unknown as Event;
 
-      // Then permission is replied
-      const repliedEvent = {
+      await stateTracker.handleEvent(event);
+
+      const sessions = stateTracker.getAllSessions();
+      expect(sessions[0].state).toBe("waiting_permission");
+      
+      const permission = stateTracker.getPendingPermission();
+      expect(permission).not.toBeNull();
+      expect(permission!.id).toBe("perm_1");
+      expect(permission!.type).toBe("file");
+    });
+  });
+
+  describe("permission.replied event", () => {
+    it("should clear permission and transition to working", async () => {
+      await stateTracker.setSessionId("ses_123");
+      
+      // First set a permission
+      await stateTracker.handleEvent({
+        type: "permission.updated",
+        properties: {
+          id: "perm_1",
+          type: "file",
+          title: "Read file",
+          sessionID: "ses_123",
+          messageID: "msg_1",
+          callID: "call_1",
+          pattern: "*.ts",
+          metadata: {},
+        },
+      } as unknown as Event);
+
+      // Then reply
+      await stateTracker.handleEvent({
         type: "permission.replied",
         properties: {},
-      };
-      await stateTracker.handleEvent(
-        repliedEvent as Parameters<typeof stateTracker.handleEvent>[0]
-      );
+      } as unknown as Event);
 
-      expect(discovery.publishState).toHaveBeenCalledWith("state", "working");
-      expect(discovery.publishPermission).toHaveBeenCalledWith(null);
+      const sessions = stateTracker.getAllSessions();
+      expect(sessions[0].state).toBe("working");
+      expect(stateTracker.getPendingPermission()).toBeNull();
     });
+  });
 
-    it("should clear pending permission via clearPermission()", async () => {
-      // First request permission
-      const permissionEvent = {
+  describe("clearPermission", () => {
+    it("should clear pending permission", async () => {
+      await stateTracker.setSessionId("ses_123");
+      
+      // Set a permission
+      await stateTracker.handleEvent({
         type: "permission.updated",
         properties: {
-          id: "perm-1",
-          type: "file_write",
-          title: "Write to file.txt",
-          sessionID: "session-1",
-          messageID: "msg-1",
+          id: "perm_1",
+          type: "file",
+          title: "Read file",
+          sessionID: "ses_123",
+          messageID: "msg_1",
+          callID: "call_1",
+          pattern: "*.ts",
           metadata: {},
         },
-      };
-      await stateTracker.handleEvent(
-        permissionEvent as Parameters<typeof stateTracker.handleEvent>[0]
-      );
+      } as unknown as Event);
 
       expect(stateTracker.getPendingPermission()).not.toBeNull();
 
       await stateTracker.clearPermission();
 
       expect(stateTracker.getPendingPermission()).toBeNull();
-      expect(discovery.publishPermission).toHaveBeenCalledWith(null);
-    });
-
-    it("should track pending permission details", async () => {
-      const permissionEvent = {
-        type: "permission.updated",
-        properties: {
-          id: "perm-123",
-          type: "bash",
-          title: "Execute command: rm -rf /",
-          sessionID: "session-1",
-          messageID: "msg-1",
-          callID: "call-1",
-          pattern: "rm *",
-          metadata: { dangerous: true },
-        },
-      };
-      await stateTracker.handleEvent(
-        permissionEvent as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-
-      const pending = stateTracker.getPendingPermission();
-      expect(pending).toMatchObject({
-        id: "perm-123",
-        type: "bash",
-        title: "Execute command: rm -rf /",
-        sessionID: "session-1",
-        messageID: "msg-1",
-        callID: "call-1",
-        pattern: "rm *",
-      });
     });
   });
 
-  describe("token and cost tracking", () => {
-    beforeEach(async () => {
-      await stateTracker.initialize();
-      vi.clearAllMocks();
-    });
-
-    it("should track tokens and cost from assistant message", async () => {
-      const event = {
-        type: "message.updated",
-        properties: {
-          info: {
-            id: "msg-1",
-            role: "assistant",
-            providerID: "anthropic",
-            modelID: "claude-sonnet-4-20250514",
-            sessionID: "session-1",
-            tokens: {
-              input: 1000,
-              output: 500,
-            },
-            cost: 0.0075,
-            time: { created: Date.now() },
-          },
-        },
-      };
-
-      await stateTracker.handleEvent(
-        event as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-
-      expect(discovery.publishState).toHaveBeenCalledWith(
-        "model",
-        "anthropic/claude-sonnet-4-20250514"
-      );
-      expect(discovery.publishState).toHaveBeenCalledWith("tokens_input", 1000);
-      expect(discovery.publishState).toHaveBeenCalledWith("tokens_output", 500);
-      expect(discovery.publishState).toHaveBeenCalledWith("cost", 0.0075);
-    });
-  });
-
-  describe("session lifecycle", () => {
-    it("should track current session ID", async () => {
-      expect(stateTracker.getCurrentSessionId()).toBeNull();
-
-      await stateTracker.initialize();
-
-      const event = {
-        type: "session.created",
-        properties: {
-          info: {
-            id: "session-abc-123",
-            title: "New Session",
-            projectID: "project-1",
-            time: { created: Date.now() },
-          },
-        },
-      };
-      await stateTracker.handleEvent(
-        event as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-
-      expect(stateTracker.getCurrentSessionId()).toBe("session-abc-123");
-    });
-
-    it("should reset tokens and cost on session created", async () => {
-      await stateTracker.initialize();
-
-      // First send some token/cost updates
-      const msgEvent = {
-        type: "message.updated",
-        properties: {
-          info: {
-            id: "msg-1",
-            role: "assistant",
-            providerID: "anthropic",
-            modelID: "claude-sonnet-4-20250514",
-            sessionID: "session-1",
-            tokens: { input: 5000, output: 2000 },
-            cost: 0.05,
-            time: { created: Date.now() },
-          },
-        },
-      };
-      await stateTracker.handleEvent(
-        msgEvent as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-      vi.clearAllMocks();
-
-      // Now create a new session
-      const createEvent = {
-        type: "session.created",
-        properties: {
-          info: {
-            id: "session-2",
-            title: "New Session",
-            projectID: "project-1",
-            time: { created: Date.now() },
-          },
-        },
-      };
-      await stateTracker.handleEvent(
-        createEvent as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-
-      // Tokens and cost should be reset to 0
-      expect(discovery.publishState).toHaveBeenCalledWith("tokens_input", 0);
-      expect(discovery.publishState).toHaveBeenCalledWith("tokens_output", 0);
-      expect(discovery.publishState).toHaveBeenCalledWith("cost", 0);
-    });
-  });
-
-  describe("tool tracking", () => {
-    beforeEach(async () => {
-      await stateTracker.initialize();
-      vi.clearAllMocks();
-    });
-
-    it("should track running tool", async () => {
-      const event = {
+  describe("previous_state tracking", () => {
+    it("should track previous state on transitions", async () => {
+      await stateTracker.setSessionId("ses_123");
+      
+      // Start idle, transition to working
+      await stateTracker.handleEvent({
         type: "message.part.updated",
         properties: {
-          part: {
-            type: "tool",
-            tool: "read",
-            id: "tool-1",
-            state: {
-              status: "running",
-            },
-          },
+          part: { type: "text" },
+          delta: "hello",
         },
-      };
+      } as unknown as Event);
 
-      await stateTracker.handleEvent(
-        event as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-
-      expect(discovery.publishState).toHaveBeenCalledWith(
-        "current_tool",
-        "read"
-      );
-      expect(discovery.publishState).toHaveBeenCalledWith("state", "working");
-    });
-
-    it("should clear tool when completed", async () => {
-      // First start tool
-      const startEvent = {
-        type: "message.part.updated",
-        properties: {
-          part: {
-            type: "tool",
-            tool: "read",
-            id: "tool-1",
-            state: { status: "running" },
-          },
-        },
-      };
-      await stateTracker.handleEvent(
-        startEvent as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-      vi.clearAllMocks();
-
-      // Then complete
-      const completeEvent = {
-        type: "message.part.updated",
-        properties: {
-          part: {
-            type: "tool",
-            tool: "read",
-            id: "tool-1",
-            state: { status: "completed" },
-          },
-        },
-      };
-      await stateTracker.handleEvent(
-        completeEvent as Parameters<typeof stateTracker.handleEvent>[0]
-      );
-
-      expect(discovery.publishState).toHaveBeenCalledWith(
-        "current_tool",
-        "none"
-      );
+      const sessions = stateTracker.getAllSessions();
+      expect(sessions[0].state).toBe("working");
+      expect(sessions[0].previous_state).toBe("idle");
     });
   });
 });
