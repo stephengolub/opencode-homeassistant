@@ -1,99 +1,71 @@
 # Configuration
 
-The OpenCode Home Assistant plugin can be configured through OpenCode's plugin configuration system.
+The OpenCode Home Assistant plugin stores connection configuration after the initial pairing process.
 
-## Configuration File
+## Configuration Storage
 
-Add your configuration to `opencode.json` in your project root, or to the global config at `~/.config/opencode/config.json`:
+After pairing with Home Assistant, the plugin stores connection details in:
+
+```
+~/.config/opencode/ha-config.json
+```
+
+This file is created automatically during pairing and contains:
 
 ```json
 {
-  "plugins": {
-    "ha-opencode": {
-      "mqtt": {
-        "host": "localhost",
-        "port": 1883,
-        "username": "mqtt_user",
-        "password": "mqtt_password",
-        "protocol": "mqtt"
-      },
-      "homeAssistant": {
-        "discoveryPrefix": "homeassistant",
-        "topicPrefix": "opencode"
-      },
-      "device": {
-        "name": "My Project",
-        "identifier": "custom-device-id"
-      }
-    }
-  }
+  "url": "ws://homeassistant.local:8123/api/websocket",
+  "accessToken": "your-long-lived-access-token",
+  "instanceToken": "generated-during-pairing",
+  "instanceId": "instance_abc123def456"
 }
 ```
 
-## Configuration Options
-
-### MQTT Settings
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `mqtt.host` | string | `localhost` | MQTT broker hostname |
-| `mqtt.port` | number | `1883` | MQTT broker port |
-| `mqtt.username` | string | - | MQTT authentication username |
-| `mqtt.password` | string | - | MQTT authentication password |
-| `mqtt.protocol` | string | `mqtt` | Protocol: `mqtt`, `mqtts`, `ws`, `wss` |
-
-### Home Assistant Settings
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `homeAssistant.discoveryPrefix` | string | `homeassistant` | HA MQTT discovery prefix |
-| `homeAssistant.topicPrefix` | string | `opencode` | Prefix for all plugin topics |
-
-### Device Settings
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `device.name` | string | Project folder name | Display name in Home Assistant |
-| `device.identifier` | string | Auto-generated | Unique device identifier |
+!!! warning "Security Note"
+    This file contains sensitive credentials. Ensure it has appropriate file permissions (`chmod 600`).
 
 ## Environment Variables
 
-You can also configure MQTT credentials via environment variables:
+You can also configure the plugin via environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `OPENCODE_HA_URL` | Home Assistant URL (e.g., `http://homeassistant.local:8123`) |
+| `OPENCODE_HA_ACCESS_TOKEN` | Long-lived access token |
+
+Environment variables are useful for CI/CD environments or when you don't want credentials in a config file.
 
 ```bash
-export OPENCODE_MQTT_HOST=your-broker.local
-export OPENCODE_MQTT_PORT=1883
-export OPENCODE_MQTT_USERNAME=user
-export OPENCODE_MQTT_PASSWORD=secret
+export OPENCODE_HA_URL=http://homeassistant.local:8123
+export OPENCODE_HA_ACCESS_TOKEN=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
-Environment variables take precedence over configuration file values for sensitive data.
+## Configuration Priority
 
-## TLS/SSL Configuration
+The plugin loads configuration in this order (later values override earlier):
 
-For secure MQTT connections:
+1. Default values
+2. Environment variables (`OPENCODE_HA_URL`, `OPENCODE_HA_ACCESS_TOKEN`)
+3. Config file (`~/.config/opencode/ha-config.json`)
 
-```json
-{
-  "plugins": {
-    "ha-opencode": {
-      "mqtt": {
-        "host": "secure-broker.example.com",
-        "port": 8883,
-        "protocol": "mqtts",
-        "rejectUnauthorized": true
-      }
-    }
-  }
-}
-```
+## Re-pairing
 
-## Multiple Projects
+If you need to re-pair with Home Assistant (e.g., changed URL, new access token):
 
-Each OpenCode instance automatically creates a unique device in Home Assistant based on:
+1. Delete the config file:
+   ```bash
+   rm ~/.config/opencode/ha-config.json
+   ```
 
-1. Project directory name
-2. Hostname of the machine
-3. Optional custom identifier
+2. Restart OpenCode
 
-This allows monitoring multiple projects simultaneously.
+3. Follow the [pairing process](pairing.md) again
+
+## Multiple Home Assistant Instances
+
+The plugin currently supports connection to a single Home Assistant instance. The instance is identified by the `instanceToken` generated during pairing.
+
+If you need to switch between Home Assistant instances:
+
+1. Delete the existing config file
+2. Re-pair with the new instance

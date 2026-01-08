@@ -13,8 +13,8 @@ We welcome contributions to the OpenCode Home Assistant Plugin! This guide will 
 ### Clone and Install
 
 ```bash
-git clone https://gitlab.com/opencode-home-assistant/opencode-plugin.git
-cd opencode-plugin
+git clone https://github.com/stephengolub/opencode-homeassistant.git
+cd opencode-homeassistant
 npm install
 ```
 
@@ -39,19 +39,16 @@ npm run test:watch
 ## Project Structure
 
 ```
-opencode-plugin/
+opencode-homeassistant/
 ├── src/
 │   ├── index.ts        # Plugin entry point
-│   ├── mqtt.ts         # MQTT client wrapper
-│   ├── discovery.ts    # HA MQTT Discovery
+│   ├── websocket.ts    # Home Assistant WebSocket client
 │   ├── state.ts        # State tracking
 │   ├── commands.ts     # Command handling
-│   ├── config.ts       # Configuration
-│   ├── notify.ts       # Local notifications
-│   └── cleanup.ts      # Session cleanup
+│   ├── ha-config.ts    # Configuration storage
+│   └── notify.ts       # Local notifications
 ├── tests/              # Test files
-├── blueprints/         # HA blueprints
-├── docs/               # Documentation
+├── docs/               # Documentation (MkDocs)
 ├── dist/               # Build output
 └── coverage/           # Test coverage
 ```
@@ -68,7 +65,7 @@ opencode-plugin/
 We use [Vitest](https://vitest.dev/) for testing. Tests should:
 
 - Cover all public APIs
-- Mock external dependencies (MQTT, OpenCode SDK)
+- Mock external dependencies (WebSocket, OpenCode SDK)
 - Test error conditions
 - Maintain >80% coverage
 
@@ -84,14 +81,14 @@ npm test -- -t "permission"
 
 ## Submitting Changes
 
-### Merge Requests
+### Pull Requests
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/my-feature`
 3. Make your changes
 4. Run tests: `npm test`
 5. Commit with a descriptive message
-6. Push and create a Merge Request
+6. Push and create a Pull Request
 
 ### Commit Messages
 
@@ -99,13 +96,13 @@ Follow conventional commits:
 
 ```
 feat: add new command for session switching
-fix: handle MQTT reconnection edge case
+fix: handle WebSocket reconnection edge case
 docs: update installation guide
 test: add tests for permission handling
 chore: update dependencies
 ```
 
-### MR Guidelines
+### PR Guidelines
 
 - Keep changes focused and atomic
 - Include tests for new functionality
@@ -114,12 +111,12 @@ chore: update dependencies
 
 ## Documentation
 
-Documentation is built with MkDocs and hosted on GitLab Pages.
+Documentation is built with MkDocs and hosted on GitHub Pages.
 
 ### Local Preview
 
 ```bash
-pip install mkdocs-material mike
+pip install -r docs/requirements.txt
 mkdocs serve
 ```
 
@@ -133,7 +130,7 @@ mkdocs build
 
 ## Releasing
 
-Releases are automated via GitLab CI:
+Releases are automated via GitHub Actions:
 
 1. Update version in `package.json`
 2. Create a tag: `git tag v1.2.3`
@@ -143,15 +140,17 @@ CI will:
 
 - Run tests
 - Build the package
-- Publish to npm
-- Create GitLab release
-- Update documentation
+- Create GitHub release
+
+## Related Projects
+
+- **[ha-opencode](https://github.com/stephengolub/ha-opencode)** - Home Assistant integration (companion project)
+- **[OpenCode](https://opencode.ai)** - AI coding assistant
 
 ## Getting Help
 
-- [GitLab Issues](https://gitlab.com/opencode-home-assistant/opencode-plugin/-/issues)
-- [Discussions](https://gitlab.com/opencode-home-assistant/opencode-plugin/-/issues)
+- [GitHub Issues](https://github.com/stephengolub/opencode-homeassistant/issues)
 
 ## License
 
-MIT License - see [LICENSE](https://gitlab.com/opencode-home-assistant/opencode-plugin/-/blob/main/LICENSE) for details.
+MIT License - see [LICENSE](https://github.com/stephengolub/opencode-homeassistant/blob/main/LICENSE) for details.

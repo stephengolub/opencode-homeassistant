@@ -4,58 +4,57 @@ This guide walks you through installing the OpenCode Home Assistant plugin.
 
 ## Prerequisites
 
-Before installing, ensure you have:
+Before installing the plugin, ensure you have:
 
-- **Home Assistant** with MQTT integration configured and running
-- **OpenCode** AI coding assistant installed
-- **Node.js 18+** installed on the machine running OpenCode
-- **MQTT Broker** accessible from both Home Assistant and your development machine
+1. **OpenCode** installed and working
+2. **Home Assistant** running (2024.1 or later)
+3. **ha-opencode integration** installed in Home Assistant - see [ha-opencode](https://github.com/stephengolub/ha-opencode)
 
-## Installation Methods
+## Install the Plugin
 
-### Method 1: npm (Recommended)
-
-```bash
-npm install -g ha-opencode
-```
-
-### Method 2: From Source
+### Option 1: From npm (Recommended)
 
 ```bash
-git clone https://gitlab.com/opencode-home-assistant/opencode-plugin.git
-cd opencode-plugin
-npm install
-npm run build
-npm link
+npm install --prefix ~/.config/opencode ha-opencode
 ```
 
-## Configuring OpenCode
+### Option 2: From Local Path
 
-Add the plugin to your OpenCode configuration file (`opencode.json` or `~/.config/opencode/config.json`):
+If you've cloned the repository:
+
+```bash
+npm install --prefix ~/.config/opencode /path/to/opencode-homeassistant
+```
+
+### Option 3: From GitHub
+
+```bash
+npm install --prefix ~/.config/opencode github:stephengolub/opencode-homeassistant
+```
+
+## Enable the Plugin
+
+Add `"ha-opencode"` to your OpenCode configuration file (`~/.config/opencode/opencode.json`):
 
 ```json
 {
-  "plugins": {
-    "ha-opencode": {
-      "mqtt": {
-        "host": "your-mqtt-broker.local",
-        "port": 1883,
-        "username": "mqtt_user",
-        "password": "mqtt_password"
-      }
-    }
-  }
+  "plugins": ["ha-opencode"]
 }
 ```
 
-## Verifying Installation
+If you have other plugins, add it to the existing array:
 
-1. Start OpenCode in any project directory
-2. Check Home Assistant for new MQTT devices
-3. You should see a new device named "OpenCode - [project-name]"
+```json
+{
+  "plugins": ["some-other-plugin", "ha-opencode"]
+}
+```
+
+## Verify Installation
+
+Start a new OpenCode session. You should see a notification that the plugin is loaded (if your terminal supports notifications).
 
 ## Next Steps
 
-- [Configure the plugin](configuration.md) with your specific settings
-- [Quick Start Guide](quick-start.md) to get up and running
-- Install the [Companion Card](../card/overview.md) for a beautiful dashboard
+1. [Configure the plugin](configuration.md) (optional)
+2. [Pair with Home Assistant](pairing.md)

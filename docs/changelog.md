@@ -4,6 +4,24 @@ All notable changes to the OpenCode Home Assistant Plugin will be documented her
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING**: Replaced MQTT with native WebSocket connection to Home Assistant
+- Commands renamed to match Home Assistant integration: `prompt` → `send_prompt`, `permission_response` → `respond_permission`
+- Removed `get_history_since` command - use `get_history` with optional `since` parameter
+- Moved blueprints to [ha-opencode](https://github.com/stephengolub/ha-opencode) repository
+
+### Added
+- Secure pairing flow with one-time codes
+- Token-based authentication for persistent connections
+- Automatic reconnection with saved credentials
+- History and agents response handlers
+
+### Removed
+- MQTT broker dependency
+- MQTT Discovery
+- Stale session cleanup (handled by HA integration)
+- Blueprints (now in ha-opencode repo)
+
 ## [0.1.3] - 2025-01-07
 
 ### Fixed
@@ -39,12 +57,6 @@ All notable changes to the OpenCode Home Assistant Plugin will be documented her
 - Session cleanup functionality
 - Local terminal notifications (Kitty protocol)
 - Comprehensive test suite
-
-### Features
-- Real-time state updates via MQTT
-- Multiple concurrent session support
-- Configurable MQTT connection settings
-- Environment variable support for credentials
 
 ---
 

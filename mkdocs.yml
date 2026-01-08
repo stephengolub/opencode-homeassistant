@@ -1,8 +1,8 @@
 site_name: OpenCode Home Assistant Plugin
-site_description: OpenCode plugin for Home Assistant integration via MQTT
-site_url: https://opencode-home-assistant.gitlab.io/opencode-plugin
-repo_url: https://gitlab.com/opencode-home-assistant/opencode-plugin
-repo_name: opencode-home-assistant/opencode-plugin
+site_description: OpenCode plugin for Home Assistant integration via WebSocket
+site_url: https://stephengolub.github.io/opencode-homeassistant
+repo_url: https://github.com/stephengolub/opencode-homeassistant
+repo_name: stephengolub/opencode-homeassistant
 
 theme:
   name: material
@@ -34,7 +34,7 @@ theme:
     - content.code.copy
     - content.code.annotate
   icon:
-    repo: fontawesome/brands/gitlab
+    repo: fontawesome/brands/github
 
 plugins:
   - search
@@ -43,8 +43,8 @@ extra:
   version:
     provider: mike
   social:
-    - icon: fontawesome/brands/gitlab
-      link: https://gitlab.com/opencode-home-assistant/opencode-plugin
+    - icon: fontawesome/brands/github
+      link: https://github.com/stephengolub/opencode-homeassistant
 
 markdown_extensions:
   - admonition
@@ -67,20 +67,11 @@ nav:
   - Getting Started:
       - Installation: getting-started/installation.md
       - Configuration: getting-started/configuration.md
-      - Quick Start: getting-started/quick-start.md
+      - Pairing: getting-started/pairing.md
   - Features:
-      - MQTT Integration: features/mqtt.md
-      - Home Assistant Entities: features/entities.md
+      - Session Tracking: features/session-tracking.md
       - Commands: features/commands.md
       - Permissions: features/permissions.md
-  - Companion Card:
-      - Overview: card/overview.md
-      - Installation: card/installation.md
-      - Configuration: card/configuration.md
-  - Blueprints:
-      - Overview: blueprints/overview.md
-      - Permission Response: blueprints/permission-response.md
-      - State Notifications: blueprints/state-notifications.md
   - Development:
       - Contributing: development/contributing.md
       - Architecture: development/architecture.md

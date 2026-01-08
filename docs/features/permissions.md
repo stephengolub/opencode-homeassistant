@@ -7,20 +7,15 @@ OpenCode requires explicit permission for certain operations. This plugin allows
 When OpenCode needs to perform a potentially dangerous action (like running a shell command), it:
 
 1. Pauses execution
-2. Publishes the permission request to MQTT
+2. Sends the permission request to Home Assistant via WebSocket
 3. Waits for a response
 4. Continues or aborts based on your decision
 
 ## Permission States
 
-The `sensor.opencode_{device}_state` entity shows:
+The session state changes to `waiting_permission` when a permission is pending.
 
-- `waiting_permission` - A permission request is pending
-
-The `sensor.opencode_{device}_permission` entity shows:
-
-- `none` - No pending permission
-- `pending` - Permission awaiting response
+A dedicated binary sensor (`binary_sensor.*_permission_pending`) indicates whether a permission is waiting for response.
 
 ## Permission Types
 
@@ -34,40 +29,40 @@ The `sensor.opencode_{device}_permission` entity shows:
 
 ## Responding to Permissions
 
-### From Home Assistant UI
+### From Home Assistant
 
-Using the [OpenCode Card](../card/overview.md), you can click on permission alerts to:
+Using the [ha-opencode integration](https://github.com/stephengolub/ha-opencode):
 
-- **Allow Once** - Permit this specific action
-- **Always Allow** - Create a rule to auto-approve similar actions
-- **Reject** - Deny the action
-
-### Via MQTT Command
+**Via Service:**
 
 ```yaml
-service: mqtt.publish
+service: opencode.respond_permission
 data:
-  topic: "opencode/opencode_myproject/command"
-  payload: >
-    {
-      "command": "permission_response",
-      "permission_id": "{{ state_attr('sensor.opencode_myproject_permission', 'permission_id') }}",
-      "response": "once"
-    }
+  session_id: ses_abc123
+  permission_id: perm_xyz789
+  response: once
 ```
+
+**Via Lovelace Card:**
+
+The OpenCode card shows permission details with Approve/Reject buttons.
+
+**Via Mobile Notification:**
+
+Using the included blueprints, you can receive notifications with actionable buttons.
 
 ### Via Automation
 
-See [Blueprints](../blueprints/overview.md) for ready-to-use automations that send mobile notifications with actionable buttons.
+See the [ha-opencode blueprints](https://github.com/stephengolub/ha-opencode/tree/main/blueprints) for ready-to-use automations.
 
-## Permission Attributes
+## Permission Details
 
-When a permission is pending, the permission sensor includes:
+When a permission is pending, the following information is available:
 
-| Attribute | Description |
-|-----------|-------------|
+| Field | Description |
+|-------|-------------|
 | `permission_id` | Unique identifier (required for response) |
-| `type` | Permission category |
+| `type` | Permission category (bash, edit, etc.) |
 | `title` | Human-readable description |
 | `session_id` | Associated session |
 | `message_id` | Associated message |
@@ -100,16 +95,17 @@ When you respond with `always`, OpenCode creates a rule that automatically appro
     - Network-related commands
     - Commands with user input interpolation
 
-!!! tip "Use Pattern Matching"
+!!! tip "Use Pattern Matching Wisely"
     The "Always Allow" option uses pattern matching. A rule for `npm *` will approve all npm commands, so use it judiciously.
 
 ## Example: Mobile Notification with Actions
 
-Using the [Permission Response Blueprint](../blueprints/permission-response.md):
+Using the blueprints from [ha-opencode](https://github.com/stephengolub/ha-opencode):
 
 1. Phone receives notification: "OpenCode wants to run: npm install"
-2. Tap "Allow Once" or "Always Allow"
-3. Response is sent via MQTT
-4. OpenCode continues execution
+2. Notification includes permission type, title, and pattern
+3. Tap "Approve" or "Reject"
+4. Response is sent to OpenCode via WebSocket
+5. OpenCode continues or aborts based on your decision
 
 This enables hands-free coding while maintaining security control.
