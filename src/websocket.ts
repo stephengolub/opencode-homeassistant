@@ -14,6 +14,49 @@ export interface HAMessage {
   [key: string]: unknown;
 }
 
+export interface HistoryResponseData {
+  session_id: string;
+  session_title: string;
+  messages: HistoryMessageData[];
+  fetched_at: string;
+  since?: string;
+  request_id?: string;
+}
+
+export interface HistoryMessageData {
+  id: string;
+  role: "user" | "assistant";
+  timestamp: string;
+  model?: string;
+  provider?: string;
+  tokens_input?: number;
+  tokens_output?: number;
+  cost?: number;
+  parts: HistoryPartData[];
+}
+
+export interface HistoryPartData {
+  type: "text" | "tool_call" | "tool_result" | "image" | "other";
+  content?: string;
+  tool_name?: string;
+  tool_id?: string;
+  tool_args?: Record<string, unknown>;
+  tool_output?: string;
+  tool_error?: string;
+}
+
+export interface AgentData {
+  name: string;
+  description?: string;
+  mode: "subagent" | "primary" | "all";
+}
+
+export interface AgentsResponseData {
+  session_id: string;
+  agents: AgentData[];
+  request_id?: string;
+}
+
 export interface HAWebSocketClient {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
@@ -23,6 +66,8 @@ export interface HAWebSocketClient {
   sendSessionUpdate(instanceToken: string, session: SessionUpdate): Promise<void>;
   sendSessionRemoved(instanceToken: string, sessionId: string): Promise<void>;
   sendStateResponse(instanceToken: string, sessions: SessionUpdate[]): Promise<void>;
+  sendHistoryResponse(instanceToken: string, data: HistoryResponseData): Promise<void>;
+  sendAgentsResponse(instanceToken: string, data: AgentsResponseData): Promise<void>;
   onCommand(handler: CommandHandler): void;
   onStateRequest(handler: () => void): void;
   onDisconnect(handler: () => void): void;
@@ -416,6 +461,30 @@ export function createHAWebSocketClient(config: HAWebSocketConfig): HAWebSocketC
         type: "opencode/state_response",
         instance_token: instanceToken,
         sessions,
+      });
+    },
+
+    async sendHistoryResponse(instanceToken: string, data: HistoryResponseData): Promise<void> {
+      if (!this.isConnected()) {
+        throw new Error("Not connected");
+      }
+
+      await send({
+        type: "opencode/history_response",
+        instance_token: instanceToken,
+        ...data,
+      });
+    },
+
+    async sendAgentsResponse(instanceToken: string, data: AgentsResponseData): Promise<void> {
+      if (!this.isConnected()) {
+        throw new Error("Not connected");
+      }
+
+      await send({
+        type: "opencode/agents_response",
+        instance_token: instanceToken,
+        ...data,
       });
     },
 

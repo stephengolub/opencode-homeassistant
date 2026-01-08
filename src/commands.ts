@@ -1,5 +1,12 @@
 import type { OpencodeClient } from "@opencode-ai/sdk";
-import type { HAWebSocketClient } from "./websocket.js";
+import type { 
+  HAWebSocketClient, 
+  HistoryResponseData, 
+  HistoryMessageData, 
+  HistoryPartData, 
+  AgentsResponseData,
+  AgentData 
+} from "./websocket.js";
 import type { StateTracker } from "./state.js";
 import { notify } from "./notify.js";
 
@@ -25,35 +32,6 @@ interface GetHistoryCommand {
 interface GetHistorySinceCommand {
   since: string;
   request_id?: string;
-}
-
-// Response types (these will be sent back via events fired by HA)
-export interface AgentInfo {
-  name: string;
-  description?: string;
-  mode: "subagent" | "primary" | "all";
-}
-
-export interface HistoryMessage {
-  id: string;
-  role: "user" | "assistant";
-  timestamp: string;
-  model?: string;
-  provider?: string;
-  tokens_input?: number;
-  tokens_output?: number;
-  cost?: number;
-  parts: HistoryPart[];
-}
-
-export interface HistoryPart {
-  type: "text" | "tool_call" | "tool_result" | "image" | "other";
-  content?: string;
-  tool_name?: string;
-  tool_id?: string;
-  tool_args?: Record<string, unknown>;
-  tool_output?: string;
-  tool_error?: string;
 }
 
 export class CommandHandler {
@@ -126,7 +104,10 @@ export class CommandHandler {
         );
         break;
       case "get_agents":
-        await this.handleGetAgents(data as unknown as GetAgentsCommand);
+        await this.handleGetAgents(
+          sessionId,
+          data as unknown as GetAgentsCommand
+        );
         break;
       default:
         notify("Unknown Command", `Unrecognized: ${command}`);
@@ -184,24 +165,30 @@ export class CommandHandler {
     }
   }
 
-  private async handleGetAgents(_command: GetAgentsCommand): Promise<void> {
+  private async handleGetAgents(
+    sessionId: string,
+    command: GetAgentsCommand
+  ): Promise<void> {
     try {
       const result = await this.client.app.agents();
 
       if (!result.data) {
-        notify("Agents Error", "No agents data returned");
         return;
       }
 
-      const agents: AgentInfo[] = result.data.map((agent) => ({
+      const agents: AgentData[] = result.data.map((agent) => ({
         name: agent.name,
         description: agent.description,
         mode: agent.mode,
       }));
 
-      // TODO: Send response back through WebSocket
-      // For now, the card can fetch agents directly via HA service
-      void agents; // Suppress unused variable warning
+      const responseData: AgentsResponseData = {
+        session_id: sessionId || this.state.getCurrentSessionId() || "",
+        agents,
+        request_id: command.request_id,
+      };
+
+      await this.wsClient.sendAgentsResponse(this.instanceToken, responseData);
     } catch {
       // Silent failure
     }
@@ -209,7 +196,7 @@ export class CommandHandler {
 
   private async handleGetHistory(
     sessionId: string,
-    _command: GetHistoryCommand
+    command: GetHistoryCommand
   ): Promise<void> {
     const targetSessionId = sessionId || this.state.getCurrentSessionId();
 
@@ -219,8 +206,16 @@ export class CommandHandler {
 
     try {
       const history = await this.fetchSessionHistory(targetSessionId);
-      // TODO: Send response back through WebSocket
-      void history; // Suppress unused variable warning
+      
+      const responseData: HistoryResponseData = {
+        session_id: targetSessionId,
+        session_title: history.title,
+        messages: history.messages,
+        fetched_at: new Date().toISOString(),
+        request_id: command.request_id,
+      };
+
+      await this.wsClient.sendHistoryResponse(this.instanceToken, responseData);
     } catch {
       // Silent failure
     }
@@ -247,8 +242,17 @@ export class CommandHandler {
 
     try {
       const history = await this.fetchSessionHistory(targetSessionId, sinceDate);
-      // TODO: Send response back through WebSocket
-      void history; // Suppress unused variable warning
+      
+      const responseData: HistoryResponseData = {
+        session_id: targetSessionId,
+        session_title: history.title,
+        messages: history.messages,
+        fetched_at: new Date().toISOString(),
+        since: command.since,
+        request_id: command.request_id,
+      };
+
+      await this.wsClient.sendHistoryResponse(this.instanceToken, responseData);
     } catch {
       // Silent failure
     }
@@ -257,7 +261,7 @@ export class CommandHandler {
   private async fetchSessionHistory(
     sessionId: string,
     since?: Date
-  ): Promise<{ title: string; messages: HistoryMessage[] }> {
+  ): Promise<{ title: string; messages: HistoryMessageData[] }> {
     // Get session info
     const sessionResult = await this.client.session.get({
       path: { id: sessionId },
@@ -269,7 +273,7 @@ export class CommandHandler {
       path: { id: sessionId },
     });
 
-    const messages: HistoryMessage[] = [];
+    const messages: HistoryMessageData[] = [];
 
     for (const msg of messagesResult.data || []) {
       const info = msg.info;
@@ -288,7 +292,7 @@ export class CommandHandler {
       }
 
       // Convert parts to our structured format
-      const historyParts: HistoryPart[] = [];
+      const historyParts: HistoryPartData[] = [];
       for (const part of parts) {
         if (part.type === "text") {
           historyParts.push({
@@ -321,7 +325,7 @@ export class CommandHandler {
         }
       }
 
-      const historyMsg: HistoryMessage = {
+      const historyMsg: HistoryMessageData = {
         id: info.id,
         role: info.role as "user" | "assistant",
         timestamp,
