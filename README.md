@@ -1,8 +1,28 @@
 # OpenCode Home Assistant Plugin
 
-[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://stephengolub.github.io/opencode-homeassistant)
-[![GitHub Release](https://img.shields.io/github/v/release/stephengolub/opencode-homeassistant)](https://github.com/stephengolub/opencode-homeassistant/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/brand/opencode-wordmark-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/brand/opencode-wordmark-light.png">
+    <img alt="OpenCode" src="docs/assets/brand/opencode-wordmark-light.png" width="300">
+  </picture>
+</p>
+
+<p align="center">
+  <strong>Unofficial Home Assistant Plugin for OpenCode</strong>
+</p>
+
+<p align="center">
+  <a href="https://stephengolub.github.io/opencode-homeassistant"><img src="https://img.shields.io/badge/docs-GitHub%20Pages-blue" alt="Documentation"></a>
+  <a href="https://github.com/stephengolub/opencode-homeassistant/releases"><img src="https://img.shields.io/github/v/release/stephengolub/opencode-homeassistant" alt="GitHub Release"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+</p>
+
+---
+
+> **Note:** This is an **unofficial** community project and is not affiliated with, endorsed by, or supported by OpenCode or Anomaly. OpenCode branding is used in accordance with their [brand guidelines](https://opencode.ai/brand).
+
+---
 
 OpenCode plugin that enables real-time integration with Home Assistant via native WebSocket connection.
 

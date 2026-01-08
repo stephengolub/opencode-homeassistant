@@ -1,5 +1,16 @@
 # OpenCode Home Assistant Plugin
 
+<p align="center">
+  <img src="assets/brand/opencode-wordmark-light.png" alt="OpenCode" width="300">
+</p>
+
+<p align="center">
+  <strong>Unofficial Home Assistant Plugin for OpenCode</strong>
+</p>
+
+!!! warning "Unofficial Project"
+    This is an **unofficial** community project and is not affiliated with, endorsed by, or supported by OpenCode or Anomaly. OpenCode branding is used in accordance with their [brand guidelines](https://opencode.ai/brand).
+
 Welcome to the documentation for the **OpenCode Home Assistant Plugin** - a seamless integration between [OpenCode](https://opencode.ai) AI coding assistant and Home Assistant via native WebSocket connection.
 
 ## What is this?
