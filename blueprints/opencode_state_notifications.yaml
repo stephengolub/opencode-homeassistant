@@ -9,10 +9,10 @@ blueprint:
     
     Works with both iOS and Android via the Home Assistant Companion app.
     
-    Requires the Permission Response Handler blueprint to handle approve/reject actions.
+    Requires the OpenCode integration to be installed and configured.
   domain: automation
   author: ha-opencode
-  source_url: https://github.com/your-repo/ha-opencode/blob/main/blueprints/opencode_state_notifications.yaml
+  source_url: https://gitlab.com/opencode-home-assistant/opencode-plugin/-/blob/main/blueprints/opencode_state_notifications.yaml
   input:
     notify_service:
       name: Notification Service
@@ -65,67 +65,29 @@ mode: parallel
 max_exceeded: silent
 
 trigger:
-  - platform: mqtt
-    topic: "opencode/+/state"
+  - platform: event
+    event_type: opencode_state_change
     id: state_change
 
-# Initial variables that don't depend on entity state
 variables:
-  # The new state from the MQTT payload
-  new_state: "{{ trigger.payload }}"
+  # Extract event data
+  new_state: "{{ trigger.event.data.new_state }}"
+  previous_state: "{{ trigger.event.data.previous_state | default('unknown') }}"
+  session_id: "{{ trigger.event.data.session_id }}"
+  session_title: "{{ trigger.event.data.session_title | default('Task finished') }}"
+  hostname: "{{ trigger.event.data.hostname | default('OpenCode') }}"
+  instance_id: "{{ trigger.event.data.instance_id }}"
   
-  # Extract device_id from topic: opencode/{device_id}/state
-  device_id: "{{ trigger.topic.split('/')[1] }}"
-  
-  # Build the state_topic_base for entity lookup
-  state_topic_base: "opencode/{{ device_id }}"
+  # Determine if this is a transition we care about
+  was_working: "{{ previous_state == 'working' }}"
 
 action:
-  # Small delay to ensure HA has processed the attributes MQTT message
-  # (attributes are published before state, but HA processes them async)
-  - delay:
-      milliseconds: 100
-
-  # Set variables after delay to get fresh entity state
-  - variables:
-      # Find the device_id entity that has this state_topic_base in its attributes
-      device_id_entity: >
-        {% set ns = namespace(found='') %}
-        {% for entity in states.sensor %}
-          {% if entity.attributes.get('state_topic_base', '') == state_topic_base %}
-            {% set ns.found = entity.entity_id %}
-          {% endif %}
-        {% endfor %}
-        {{ ns.found }}
-      
-      # Check if we found the entity
-      entity_found: "{{ device_id_entity != '' }}"
-      
-      # Derive other entity IDs from the device_id entity (they share the same base)
-      entity_base: "{{ device_id_entity | replace('_device_id', '') if entity_found else '' }}"
-      state_entity: "{{ (entity_base ~ '_state') if entity_found else '' }}"
-      session_entity: "{{ (entity_base ~ '_session_title') if entity_found else '' }}"
-      
-      # Get values from entities (with defaults)
-      # Use "or" to handle both undefined and null/None values
-      previous_state: "{{ (state_attr(state_entity, 'previous_state') or 'unknown') if entity_found else 'unknown' }}"
-      project_name: "{{ (state_attr(device_id_entity, 'device_name') or 'OpenCode') if entity_found else 'OpenCode' }}"
-      command_topic: "{{ (state_attr(device_id_entity, 'command_topic') or '') if entity_found else '' }}"
-      permission_id: "{{ (state_attr(state_entity, 'permission_id') or '') if entity_found else '' }}"
-      permission_title: "{{ (state_attr(state_entity, 'permission_title') or 'Permission needed') if entity_found else 'Permission needed' }}"
-      error_message: "{{ (state_attr(state_entity, 'error_message') or 'An error occurred') if entity_found else 'An error occurred' }}"
-      session_title: "{{ (states(session_entity) or 'Task finished') if entity_found else 'Task finished' }}"
-      
-      # Determine if this is a transition we care about
-      was_working: "{{ previous_state == 'working' }}"
-
-  # Continue with actions
   # Log for debugging (can be removed later)
   - service: system_log.write
     data:
       message: >
-        OpenCode notification trigger: new_state={{ new_state }}, previous_state={{ previous_state }}, 
-        device_id={{ device_id }}, entity_found={{ entity_found }}, was_working={{ was_working }}
+        OpenCode state change: new_state={{ new_state }}, previous_state={{ previous_state }}, 
+        session_id={{ session_id }}, hostname={{ hostname }}, was_working={{ was_working }}
       level: info
       logger: ha-opencode.blueprint
 
@@ -137,15 +99,12 @@ action:
           - condition: template
             value_template: !input notify_on_permission
         sequence:
-          # Small delay to let permission attributes arrive
-          - delay:
-              milliseconds: 500
           - service: !input notify_service
             data:
               title: "OpenCode: Permission Required"
-              message: "{{ project_name }}: {{ permission_title }}"
+              message: "{{ hostname }}: Permission needed"
               data:
-                tag: "opencode-permission-{{ device_id }}"
+                tag: "opencode-permission-{{ session_id }}"
                 channel: !input notification_channel
                 importance: high
                 priority: high
@@ -153,15 +112,14 @@ action:
                 clickAction: !input dashboard_path
                 url: !input dashboard_path
                 actions:
-                  - action: "OPENCODE_APPROVE_{{ device_id }}"
+                  - action: "OPENCODE_APPROVE_{{ session_id }}"
                     title: "Approve"
-                  - action: "OPENCODE_REJECT_{{ device_id }}"
+                  - action: "OPENCODE_REJECT_{{ session_id }}"
                     title: "Reject"
                 # Pass data needed for permission response
                 action_data:
-                  device_id: "{{ device_id }}"
-                  permission_id: "{{ permission_id }}"
-                  command_topic: "{{ command_topic }}"
+                  session_id: "{{ session_id }}"
+                  instance_id: "{{ instance_id }}"
 
       # Error Occurred (only after working)
       - conditions:
@@ -173,9 +131,9 @@ action:
           - service: !input notify_service
             data:
               title: "OpenCode: Error"
-              message: "{{ project_name }}: {{ error_message }}"
+              message: "{{ hostname }}: An error occurred"
               data:
-                tag: "opencode-error-{{ device_id }}"
+                tag: "opencode-error-{{ session_id }}"
                 channel: !input notification_channel
                 importance: high
                 priority: high
@@ -193,9 +151,9 @@ action:
           - service: !input notify_service
             data:
               title: "OpenCode: Task Complete"
-              message: "{{ project_name }}: {{ session_title }}"
+              message: "{{ hostname }}: {{ session_title }}"
               data:
-                tag: "opencode-complete-{{ device_id }}"
+                tag: "opencode-complete-{{ session_id }}"
                 channel: !input notification_channel
                 clickAction: !input dashboard_path
                 url: !input dashboard_path

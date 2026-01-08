@@ -4,14 +4,14 @@ blueprint:
     Handles approve/reject actions from OpenCode permission notifications.
     
     This blueprint listens for notification actions (button taps) and sends
-    the appropriate permission response via MQTT.
+    the appropriate permission response via the OpenCode integration service.
     
     Works with both iOS and Android via the Home Assistant Companion app.
     
     Use this together with the OpenCode State Notifications blueprint.
   domain: automation
   author: ha-opencode
-  source_url: https://github.com/your-repo/ha-opencode/blob/main/blueprints/opencode_permission_response.yaml
+  source_url: https://gitlab.com/opencode-home-assistant/opencode-plugin/-/blob/main/blueprints/opencode_permission_response.yaml
   input: {}
 
 mode: parallel
@@ -32,6 +32,16 @@ variables:
   is_approve: "{{ action.startswith('OPENCODE_APPROVE_') }}"
   response: "{{ 'once' if is_approve else 'reject' }}"
   
+  # Extract session_id from action name (after the prefix)
+  session_id_from_action: >
+    {% if action.startswith('OPENCODE_APPROVE_') %}
+      {{ action[17:] }}
+    {% elif action.startswith('OPENCODE_REJECT_') %}
+      {{ action[16:] }}
+    {% else %}
+      
+    {% endif %}
+  
   # Get data passed from the notification
   # iOS uses action_data, Android might use data directly
   action_data: >
@@ -43,9 +53,7 @@ variables:
       {}
     {% endif %}
   
-  command_topic: "{{ action_data.command_topic | default('') }}"
-  permission_id: "{{ action_data.permission_id | default('') }}"
-  device_id: "{{ action_data.device_id | default('') }}"
+  session_id: "{{ action_data.session_id | default(session_id_from_action) }}"
 
 condition:
   - condition: template
@@ -57,25 +65,23 @@ action:
     data:
       message: >
         OpenCode permission response: action={{ action }}, is_approve={{ is_approve }}, 
-        response={{ response }}, command_topic={{ command_topic }}, 
-        permission_id={{ permission_id }}, device_id={{ device_id }},
+        response={{ response }}, session_id={{ session_id }},
         action_data={{ action_data }}
       level: info
       logger: ha-opencode.permission
 
-  # Check we have required data before publishing
+  # Check we have required data before calling service
   - condition: template
-    value_template: "{{ command_topic != '' and permission_id != '' }}"
+    value_template: "{{ session_id != '' }}"
 
-  - service: mqtt.publish
+  - service: opencode.respond_permission
     data:
-      topic: "{{ command_topic }}"
-      payload: >
-        {"command": "permission_response", "permission_id": "{{ permission_id }}", "response": "{{ response }}"}
+      session_id: "{{ session_id }}"
+      response: "{{ response }}"
 
   # Log success
   - service: system_log.write
     data:
-      message: "OpenCode permission {{ response }} sent for {{ permission_id }}"
+      message: "OpenCode permission {{ response }} sent for session {{ session_id }}"
       level: info
       logger: ha-opencode.permission
