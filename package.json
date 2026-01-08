@@ -1,23 +1,22 @@
 {
   "name": "ha-opencode",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "OpenCode plugin for Home Assistant integration via native WebSocket API",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist",
-    "blueprints",
     "README.md",
     "LICENSE"
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://gitlab.com/opencode-home-assistant/opencode-plugin.git"
+    "url": "git+https://github.com/stephengolub/opencode-homeassistant.git"
   },
-  "homepage": "https://gitlab.com/opencode-home-assistant/opencode-plugin#readme",
+  "homepage": "https://stephengolub.github.io/opencode-homeassistant",
   "bugs": {
-    "url": "https://gitlab.com/opencode-home-assistant/opencode-plugin/-/issues"
+    "url": "https://github.com/stephengolub/opencode-homeassistant/issues"
   },
   "scripts": {
     "build": "tsc",

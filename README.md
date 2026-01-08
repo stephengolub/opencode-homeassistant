@@ -1,8 +1,14 @@
 # OpenCode Home Assistant Plugin
 
+[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://stephengolub.github.io/opencode-homeassistant)
+[![GitHub Release](https://img.shields.io/github/v/release/stephengolub/opencode-homeassistant)](https://github.com/stephengolub/opencode-homeassistant/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 OpenCode plugin that enables real-time integration with Home Assistant via native WebSocket connection.
 
 Monitor and control your OpenCode sessions directly from Home Assistant - get notified when tasks complete, approve permissions from your phone, and even send prompts remotely.
+
+**[Full Documentation](https://stephengolub.github.io/opencode-homeassistant)** | **[Home Assistant Integration](https://github.com/stephengolub/ha-opencode)**
 
 ## Features
 
@@ -188,9 +194,20 @@ This plugin uses Kitty terminal notifications (OSC 99). Supported terminals:
 
 If your terminal doesn't support OSC 99, notifications will be silent.
 
+## Documentation
+
+Full documentation is available at **[stephengolub.github.io/opencode-homeassistant](https://stephengolub.github.io/opencode-homeassistant)**
+
+- [Installation Guide](https://stephengolub.github.io/opencode-homeassistant/getting-started/installation/)
+- [Configuration](https://stephengolub.github.io/opencode-homeassistant/getting-started/configuration/)
+- [Pairing with Home Assistant](https://stephengolub.github.io/opencode-homeassistant/getting-started/pairing/)
+- [Session Tracking](https://stephengolub.github.io/opencode-homeassistant/features/session-tracking/)
+- [Commands](https://stephengolub.github.io/opencode-homeassistant/features/commands/)
+- [Permissions](https://stephengolub.github.io/opencode-homeassistant/features/permissions/)
+
 ## Related Projects
 
-- **[ha-opencode](https://github.com/stephengolub/ha-opencode)** - Home Assistant integration with Lovelace card and blueprints
+- **[ha-opencode](https://github.com/stephengolub/ha-opencode)** - Home Assistant integration with Lovelace card and blueprints ([docs](https://stephengolub.github.io/ha-opencode))
 - **[OpenCode](https://opencode.ai)** - AI coding assistant
 
 ## License
