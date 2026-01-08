@@ -32,14 +32,15 @@ The code is valid for 5 minutes.
 
 ### Step 2: Pair from OpenCode
 
-In your OpenCode session, use the `ha_pair` tool:
+In your OpenCode session, simply ask to pair with Home Assistant. For example:
 
-```
-Use ha_pair with:
-- URL: http://homeassistant.local:8123
-- Access Token: <your-token>
-- Code: ABC12DEF
-```
+> "Pair with Home Assistant at http://homeassistant.local:8123 using access token eyJ0... and pairing code ABC12DEF"
+
+Or more concisely:
+
+> "Connect to HA at 192.168.1.100:8123, token is eyJ0eXAi..., code ABC12DEF"
+
+OpenCode will use the `ha_pair` tool automatically with the provided details.
 
 Replace the URL with your Home Assistant address. You can use:
 
