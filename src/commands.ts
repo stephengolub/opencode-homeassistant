@@ -26,11 +26,7 @@ interface GetAgentsCommand {
 }
 
 interface GetHistoryCommand {
-  request_id?: string;
-}
-
-interface GetHistorySinceCommand {
-  since: string;
+  since?: string;
   request_id?: string;
 }
 
@@ -82,25 +78,19 @@ export class CommandHandler {
     data: Record<string, unknown>
   ): Promise<void> {
     switch (command) {
-      case "permission_response":
+      case "respond_permission":
         await this.handlePermissionResponse(
           sessionId,
           data as unknown as PermissionCommand
         );
         break;
-      case "prompt":
+      case "send_prompt":
         await this.handlePrompt(sessionId, data as unknown as PromptCommand);
         break;
       case "get_history":
         await this.handleGetHistory(
           sessionId,
           data as unknown as GetHistoryCommand
-        );
-        break;
-      case "get_history_since":
-        await this.handleGetHistorySince(
-          sessionId,
-          data as unknown as GetHistorySinceCommand
         );
         break;
       case "get_agents":
@@ -205,42 +195,15 @@ export class CommandHandler {
     }
 
     try {
-      const history = await this.fetchSessionHistory(targetSessionId);
-      
-      const responseData: HistoryResponseData = {
-        session_id: targetSessionId,
-        session_title: history.title,
-        messages: history.messages,
-        fetched_at: new Date().toISOString(),
-        request_id: command.request_id,
-      };
+      // Parse optional since parameter
+      let sinceDate: Date | undefined;
+      if (command.since) {
+        sinceDate = new Date(command.since);
+        if (isNaN(sinceDate.getTime())) {
+          sinceDate = undefined;
+        }
+      }
 
-      await this.wsClient.sendHistoryResponse(this.instanceToken, responseData);
-    } catch {
-      // Silent failure
-    }
-  }
-
-  private async handleGetHistorySince(
-    sessionId: string,
-    command: GetHistorySinceCommand
-  ): Promise<void> {
-    const targetSessionId = sessionId || this.state.getCurrentSessionId();
-
-    if (!targetSessionId) {
-      return;
-    }
-
-    if (!command.since) {
-      return;
-    }
-
-    const sinceDate = new Date(command.since);
-    if (isNaN(sinceDate.getTime())) {
-      return;
-    }
-
-    try {
       const history = await this.fetchSessionHistory(targetSessionId, sinceDate);
       
       const responseData: HistoryResponseData = {

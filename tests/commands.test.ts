@@ -85,11 +85,11 @@ describe("CommandHandler", () => {
     });
   });
 
-  describe("prompt command", () => {
+  describe("send_prompt command", () => {
     it("should send prompt to current session", async () => {
       handler.start();
 
-      commandCallback("prompt", "ses_123", { text: "Hello world" });
+      commandCallback("send_prompt", "ses_123", { text: "Hello world" });
 
       // Allow async processing
       await new Promise(resolve => setTimeout(resolve, 10));
@@ -106,7 +106,7 @@ describe("CommandHandler", () => {
     it("should use provided agent", async () => {
       handler.start();
 
-      commandCallback("prompt", "ses_123", { text: "Build the app", agent: "build" });
+      commandCallback("send_prompt", "ses_123", { text: "Build the app", agent: "build" });
 
       await new Promise(resolve => setTimeout(resolve, 10));
 
@@ -122,7 +122,7 @@ describe("CommandHandler", () => {
     it("should use current session if no session_id provided", async () => {
       handler.start();
 
-      commandCallback("prompt", "", { text: "Hello" });
+      commandCallback("send_prompt", "", { text: "Hello" });
 
       await new Promise(resolve => setTimeout(resolve, 10));
 
@@ -133,7 +133,7 @@ describe("CommandHandler", () => {
     });
   });
 
-  describe("permission_response command", () => {
+  describe("respond_permission command", () => {
     beforeEach(() => {
       // Set up pending permission
       (mockState.getPendingPermission as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -148,7 +148,7 @@ describe("CommandHandler", () => {
     it("should send permission response (once)", async () => {
       handler.start();
 
-      commandCallback("permission_response", "ses_123", {
+      commandCallback("respond_permission", "ses_123", {
         permission_id: "perm_1",
         response: "once",
       });
@@ -164,7 +164,7 @@ describe("CommandHandler", () => {
     it("should send permission response (always)", async () => {
       handler.start();
 
-      commandCallback("permission_response", "ses_123", {
+      commandCallback("respond_permission", "ses_123", {
         permission_id: "perm_1",
         response: "always",
       });
@@ -180,7 +180,7 @@ describe("CommandHandler", () => {
     it("should send permission response (reject)", async () => {
       handler.start();
 
-      commandCallback("permission_response", "ses_123", {
+      commandCallback("respond_permission", "ses_123", {
         permission_id: "perm_1",
         response: "reject",
       });
@@ -196,7 +196,7 @@ describe("CommandHandler", () => {
     it("should clear permission after successful response", async () => {
       handler.start();
 
-      commandCallback("permission_response", "ses_123", {
+      commandCallback("respond_permission", "ses_123", {
         permission_id: "perm_1",
         response: "once",
       });
@@ -211,7 +211,7 @@ describe("CommandHandler", () => {
       
       handler.start();
 
-      commandCallback("permission_response", "ses_123", {
+      commandCallback("respond_permission", "ses_123", {
         permission_id: "perm_1",
         response: "once",
       });
