@@ -27,7 +27,12 @@ interface GetAgentsCommand {
 
 interface GetHistoryCommand {
   since?: string;
+  limit?: number;
   request_id?: string;
+}
+
+interface RespondQuestionCommand {
+  answers: string[][];  // Array of arrays - one per question, each containing selected labels
 }
 
 export class CommandHandler {
@@ -35,17 +40,20 @@ export class CommandHandler {
   private readonly state: StateTracker;
   private readonly client: OpencodeClient;
   private readonly instanceToken: string;
+  private readonly serverUrl: URL;
 
   constructor(
     wsClient: HAWebSocketClient,
     state: StateTracker,
     client: OpencodeClient,
-    instanceToken: string
+    instanceToken: string,
+    serverUrl: URL
   ) {
     this.wsClient = wsClient;
     this.state = state;
     this.client = client;
     this.instanceToken = instanceToken;
+    this.serverUrl = serverUrl;
   }
 
   /**
@@ -97,6 +105,12 @@ export class CommandHandler {
         await this.handleGetAgents(
           sessionId,
           data as unknown as GetAgentsCommand
+        );
+        break;
+      case "respond_question":
+        await this.handleRespondQuestion(
+          sessionId,
+          data as unknown as RespondQuestionCommand
         );
         break;
       default:
@@ -204,7 +218,7 @@ export class CommandHandler {
         }
       }
 
-      const history = await this.fetchSessionHistory(targetSessionId, sinceDate);
+      const history = await this.fetchSessionHistory(targetSessionId, sinceDate, command.limit);
       
       const responseData: HistoryResponseData = {
         session_id: targetSessionId,
@@ -213,6 +227,7 @@ export class CommandHandler {
         fetched_at: new Date().toISOString(),
         since: command.since,
         request_id: command.request_id,
+        total_count: history.totalCount,
       };
 
       await this.wsClient.sendHistoryResponse(this.instanceToken, responseData);
@@ -223,8 +238,9 @@ export class CommandHandler {
 
   private async fetchSessionHistory(
     sessionId: string,
-    since?: Date
-  ): Promise<{ title: string; messages: HistoryMessageData[] }> {
+    since?: Date,
+    limit?: number
+  ): Promise<{ title: string; messages: HistoryMessageData[]; totalCount: number }> {
     // Get session info
     const sessionResult = await this.client.session.get({
       path: { id: sessionId },
@@ -237,8 +253,16 @@ export class CommandHandler {
     });
 
     const messages: HistoryMessageData[] = [];
+    const allMessages = messagesResult.data || [];
+    const totalCount = allMessages.length;
+    
+    // If limit is specified and no since filter, take only the last N messages
+    // We process from the end to get the most recent messages
+    const messagesToProcess = limit && !since 
+      ? allMessages.slice(-limit) 
+      : allMessages;
 
-    for (const msg of messagesResult.data || []) {
+    for (const msg of messagesToProcess) {
       const info = msg.info;
       const parts = msg.parts || [];
 
@@ -311,7 +335,7 @@ export class CommandHandler {
       messages.push(historyMsg);
     }
 
-    return { title: sessionTitle, messages };
+    return { title: sessionTitle, messages, totalCount };
   }
 
   private async handlePermissionResponse(
@@ -364,6 +388,102 @@ export class CommandHandler {
       await this.state.clearPermission();
     } catch {
       notify("Permission Error", "Failed to send response");
+    }
+  }
+
+  private async handleRespondQuestion(
+    _sessionId: string,
+    command: RespondQuestionCommand
+  ): Promise<void> {
+    const pendingQuestion = this.state.getPendingQuestion();
+
+    if (!pendingQuestion) {
+      notify("Question Error", "No pending question");
+      return;
+    }
+
+    if (!command.answers || !Array.isArray(command.answers)) {
+      notify("Question Error", "Invalid answers format");
+      return;
+    }
+
+    const requestId = pendingQuestion.request_id;
+    
+    // Debug logging
+    const fs = require("fs");
+    fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Responding to question: requestId=${requestId}, answers=${JSON.stringify(command.answers)}\n`);
+
+    if (!requestId) {
+      fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] ERROR: No request_id in pending question\n`);
+      notify("Question Error", "No request ID");
+      return;
+    }
+
+    try {
+      const clientAny = this.client as any;
+      
+      // Check if the client has a question API (v2 SDK)
+      if (clientAny.question && typeof clientAny.question.reply === "function") {
+        fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Using client.question.reply()\n`);
+        const result = await clientAny.question.reply({
+          requestID: requestId,
+          answers: command.answers,
+        });
+        fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Question reply success via SDK: ${JSON.stringify(result)}\n`);
+        notify("Question Response", "Answer submitted");
+        return;
+      }
+      
+      // The SDK client has an internal fetch that routes directly to the server
+      // We need to use it to call the /question/{id}/reply endpoint
+      // Access the internal client which has the configured fetch
+      const internalClient = clientAny._client;
+      fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] internalClient exists: ${!!internalClient}\n`);
+      
+      if (internalClient && typeof internalClient.post === "function") {
+        fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Using internal client POST to /question/${requestId}/reply\n`);
+        
+        const result = await internalClient.post({
+          url: `/question/${requestId}/reply`,
+          body: { answers: command.answers },
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
+        
+        fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Question reply via internal client: ${JSON.stringify(result)}\n`);
+        notify("Question Response", "Answer submitted");
+        return;
+      }
+      
+      // Fallback: Direct HTTP call to serverUrl (may fail if no HTTP server)
+      const url = new URL(`/question/${encodeURIComponent(requestId)}/reply`, this.serverUrl);
+      fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Fallback: Calling POST ${url.toString()}\n`);
+      
+      const response = await fetch(url.toString(), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          answers: command.answers,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Question API error: ${response.status} ${errorText}\n`);
+        throw new Error(`API error ${response.status}: ${errorText}`);
+      }
+
+      const result = await response.json();
+      fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Question reply success: ${JSON.stringify(result)}\n`);
+      
+      notify("Question Response", "Answer submitted");
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : "Unknown error";
+      fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Question response error: ${errMsg}\n`);
+      notify("Question Error", `Failed: ${errMsg.substring(0, 40)}`);
     }
   }
 }

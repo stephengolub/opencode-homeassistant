@@ -1,7 +1,7 @@
 import "source-map-support/register.js";
 import { hostname } from "os";
 import { type Plugin, tool } from "@opencode-ai/plugin";
-import type { Event } from "@opencode-ai/sdk";
+import type { Event, OpencodeClient } from "@opencode-ai/sdk";
 import {
   createHAWebSocketClient,
   createReconnectingClient,
@@ -38,6 +38,12 @@ export const HomeAssistantPlugin: Plugin = async (input) => {
 
   const projectName = getProjectName(input.project.worktree);
   const machineHostname = hostname();
+  const sdkClient = input.client as OpencodeClient;
+  const serverUrl = input.serverUrl;
+  
+  // Debug: log serverUrl
+  const fs = require("fs");
+  fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Plugin init: serverUrl=${serverUrl.toString()}\n`);
 
   // Cleanup function for graceful shutdown
   const cleanup = async () => {
@@ -94,24 +100,20 @@ export const HomeAssistantPlugin: Plugin = async (input) => {
       );
 
       await wsClient.connect();
-      const result = await wsClient.reconnect(
-        haConfig.instanceToken,
-        machineHostname
-      );
-
-      if (!result.success) {
-        // Token might be invalid, clear it
-        if (result.error?.includes("invalid_token")) {
-          await clearHAConnectionConfig();
-          notify("Home Assistant", "Token invalid - please re-pair");
-        }
-        return false;
+      
+      // Register the instance with HA (send opencode/connect)
+      const reconnectResult = await wsClient.reconnect(haConfig.instanceToken, machineHostname);
+      if (!reconnectResult.success) {
+        throw new Error(reconnectResult.error || "Failed to register instance");
       }
-
+      
       connected = true;
+      notify("Home Assistant", "Connected");
       return true;
-    } catch {
-      // Silent failure - will retry on next event
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Unknown error";
+      notify("HA Connection Failed", errorMsg);
+      wsClient = null;
       return false;
     }
   }
@@ -199,51 +201,46 @@ export const HomeAssistantPlugin: Plugin = async (input) => {
               }
             );
             await wsClient.connect();
-            const reconnResult = await wsClient.reconnect(currentToken, machineHostname);
-            if (reconnResult.success) {
-              connected = true;
-              hasNotifiedDisconnect = false;
-              notify("Home Assistant", "Reconnected");
-              if (currentSessionId && haConfig) {
-                state = new StateTracker(wsClient, haConfig.instanceToken, projectName);
-                commands = new CommandHandler(wsClient, state, input.client, haConfig.instanceToken);
-                commands.start();
-              }
+            connected = true;
+            hasNotifiedDisconnect = false;
+            
+            // Start command handler on new connection
+            if (commands) {
+              commands = new CommandHandler(wsClient, state!, sdkClient, currentToken, serverUrl);
+              commands.start();
             }
           } catch {
-            // Silent retry - the reconnecting client will keep trying
+            // Silent failure - will keep trying
           }
         }, 5000);
       });
 
-      // Initialize session tracking with the current connected client
-      if (currentSessionId) {
-        state = new StateTracker(wsClient, haConfig.instanceToken, projectName);
-        commands = new CommandHandler(
-          wsClient,
-          state,
-          input.client,
-          haConfig.instanceToken
-        );
-        commands.start();
-        
-        // Set the session ID and immediately publish an update to HA
-        try {
-          await state.setSessionId(currentSessionId, true);
-        } catch {
-          // Silent failure
+      // Send initial state if we have a session
+      if (state && sessionInitialized) {
+        const sessions = state.getAllSessions();
+        if (sessions.length > 0) {
+          await wsClient.sendStateResponse(haConfig.instanceToken, sessions);
         }
       }
 
       return `Successfully paired with Home Assistant!
 
-Instance ID: ${result.instanceId}
-URL: ${wsUrl}
+Instance ID: ${haConfig.instanceId}
+URL: ${haConfig.url}
 
-The connection will automatically reconnect if interrupted.`;
+The connection is now active. Your OpenCode sessions will appear in Home Assistant.`;
     } catch (err) {
+      if (wsClient) {
+        try {
+          await wsClient.disconnect();
+        } catch {
+          // Ignore disconnect errors
+        }
+        wsClient = null;
+      }
+
       const errorMsg = err instanceof Error ? err.message : "Unknown error";
-      return `Failed to pair: ${errorMsg}`;
+      return `Pairing failed: ${errorMsg}`;
     }
   }
 
@@ -309,24 +306,23 @@ Current Session: ${currentSessionId || "None"}`;
 
     // Create session tracking components
     state = new StateTracker(wsClient, haConfig.instanceToken, projectName);
-    commands = new CommandHandler(
-      wsClient,
-      state,
-      input.client,
-      haConfig.instanceToken
-    );
+    
+    // Note: Question data is now extracted directly from tool events in state.ts
+    // No polling callback needed
+    
+    commands = new CommandHandler(wsClient, state, sdkClient, haConfig.instanceToken, serverUrl);
     commands.start();
 
     sessionInitialized = true;
   }
 
   /**
-   * Extract session ID from event if available.
+   * Extract session ID from various event types.
    */
   function getSessionIdFromEvent(event: Event): string | null {
     const props = event.properties as Record<string, unknown>;
 
-    // permission.updated has sessionID at top level
+    // session.created / session.updated events have direct sessionID
     if (typeof props.sessionID === "string") {
       return props.sessionID;
     }
@@ -385,6 +381,8 @@ Current Session: ${currentSessionId || "None"}`;
 
     // Handle OpenCode events
     event: async ({ event }) => {
+      const fs = require("fs");
+      
       // Send notification when session becomes idle (task complete)
       if (event.type === "session.idle") {
         notify("OpenCode", "Task complete");
@@ -396,6 +394,7 @@ Current Session: ${currentSessionId || "None"}`;
       }
 
       if (!wsClient || !connected || !haConfig) {
+        fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Event ${event.type}: skipped - not connected (wsClient=${!!wsClient}, connected=${connected}, haConfig=${!!haConfig})\n`);
         return; // Not connected, skip event
       }
 
@@ -405,6 +404,7 @@ Current Session: ${currentSessionId || "None"}`;
 
       // Initialize session tracking when we get a session ID
       if (sessionId && (!sessionInitialized || currentSessionId !== sessionId)) {
+        fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Initializing session: ${sessionId}\n`);
         initializeSession(sessionId);
         // Also set the session ID in the state tracker
         if (state) {
@@ -413,17 +413,17 @@ Current Session: ${currentSessionId || "None"}`;
       }
 
       if (!state || !sessionInitialized) {
+        fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Event ${event.type}: skipped - session not ready (state=${!!state}, sessionInitialized=${sessionInitialized})\n`);
         return; // Session not ready, skip event
       }
 
       try {
         await state.handleEvent(event);
-      } catch {
-        // Silent failure
+      } catch (err) {
+        fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Event ${event.type}: error - ${err}\n`);
       }
     },
   };
 };
 
-// Default export for OpenCode plugin loader
 export default HomeAssistantPlugin;

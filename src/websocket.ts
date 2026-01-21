@@ -21,6 +21,7 @@ export interface HistoryResponseData {
   fetched_at: string;
   since?: string;
   request_id?: string;
+  total_count?: number;  // Total number of messages in the session (for pagination)
 }
 
 export interface HistoryMessageData {
@@ -102,6 +103,8 @@ export interface SessionUpdate {
   hostname: string;
   error_message: string | null;
   permission: PermissionInfo | null;
+  parent_session_id: string | null;
+  question: QuestionInfo | null;
 }
 
 export interface PermissionInfo {
@@ -109,10 +112,28 @@ export interface PermissionInfo {
   type: string;
   title: string;
   session_id: string;
-  message_id: string;
+  message_id?: string;
   call_id?: string;
   pattern?: string;
   metadata?: Record<string, unknown>;
+}
+
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface QuestionItem {
+  question: string;
+  header: string;
+  multiple: boolean;
+  options: QuestionOption[];
+}
+
+export interface QuestionInfo {
+  session_id: string;
+  request_id: string;  // The question request ID for replying
+  questions: QuestionItem[];
 }
 
 const RECONNECT_DELAY_MS = 5000;

@@ -1,8 +1,8 @@
 import { hostname } from "os";
 import type { Event, Permission } from "@opencode-ai/sdk";
-import type { HAWebSocketClient, SessionUpdate, PermissionInfo } from "./websocket.js";
+import type { HAWebSocketClient, SessionUpdate, PermissionInfo, QuestionInfo, QuestionItem } from "./websocket.js";
 
-type SessionState = "idle" | "working" | "waiting_permission" | "error";
+type SessionState = "idle" | "working" | "waiting_permission" | "waiting_input" | "error";
 
 interface TrackedState {
   state: SessionState;
@@ -17,6 +17,8 @@ interface TrackedState {
   agent: string | null;
   currentAgent: string | null;
   errorMessage: string | null;
+  parentSessionId: string | null;
+  pendingQuestion: QuestionInfo | null;
 }
 
 export class StateTracker {
@@ -26,6 +28,9 @@ export class StateTracker {
   private pendingPermission: PermissionInfo | null = null;
   private currentSessionId: string | null = null;
   private projectName: string;
+  
+  // Callback when question tool starts running (caller should start polling)
+  public onQuestionToolStarted: (() => void) | null = null;
 
   constructor(
     wsClient: HAWebSocketClient,
@@ -48,6 +53,8 @@ export class StateTracker {
       agent: null,
       currentAgent: null,
       errorMessage: null,
+      parentSessionId: null,
+      pendingQuestion: null,
     };
   }
 
@@ -57,6 +64,10 @@ export class StateTracker {
 
   getPendingPermission(): PermissionInfo | null {
     return this.pendingPermission;
+  }
+
+  getPendingQuestion(): QuestionInfo | null {
+    return this.state.pendingQuestion;
   }
 
   /**
@@ -90,6 +101,8 @@ export class StateTracker {
       hostname: hostname(),
       error_message: this.state.errorMessage,
       permission: this.pendingPermission,
+      parent_session_id: this.state.parentSessionId,
+      question: this.state.pendingQuestion,
     };
   }
 
@@ -102,12 +115,13 @@ export class StateTracker {
     }
 
     try {
+      const update = this.buildSessionUpdate();
       await this.wsClient.sendSessionUpdate(
         this.instanceToken,
-        this.buildSessionUpdate()
+        update
       );
     } catch {
-      // Silent failure
+      // Silent failure - HA may be temporarily unavailable
     }
   }
 
@@ -124,30 +138,44 @@ export class StateTracker {
 
   async handleEvent(event: Event): Promise<void> {
     try {
-      switch (event.type) {
+      // Cast to string for switch since v1 SDK doesn't include question events
+      const eventType = event.type as string;
+      
+      switch (eventType) {
         case "session.created":
-          await this.onSessionCreated(event);
+          await this.onSessionCreated(event as Extract<Event, { type: "session.created" }>);
           break;
         case "session.updated":
-          await this.onSessionUpdated(event);
+          await this.onSessionUpdated(event as Extract<Event, { type: "session.updated" }>);
           break;
         case "session.idle":
-          await this.onSessionIdle(event);
+          await this.onSessionIdle(event as Extract<Event, { type: "session.idle" }>);
           break;
         case "session.error":
-          await this.onSessionError(event);
+          await this.onSessionError(event as Extract<Event, { type: "session.error" }>);
           break;
         case "message.updated":
-          await this.onMessageUpdated(event);
+          await this.onMessageUpdated(event as Extract<Event, { type: "message.updated" }>);
           break;
         case "message.part.updated":
-          await this.onMessagePartUpdated(event);
+          await this.onMessagePartUpdated(event as Extract<Event, { type: "message.part.updated" }>);
           break;
         case "permission.updated":
-          await this.onPermissionUpdated(event);
+        case "permission.asked":
+          // Handle both v1 (permission.updated) and v2 (permission.asked) event names
+          await this.onPermissionUpdated(event as Extract<Event, { type: "permission.updated" }>);
           break;
         case "permission.replied":
-          await this.onPermissionReplied(event);
+          await this.onPermissionReplied(event as Extract<Event, { type: "permission.replied" }>);
+          break;
+        case "question.asked":
+          // Handle question.asked events (not typed in v1 SDK but still received)
+          await this.onQuestionAsked(event as any);
+          break;
+        case "question.replied":
+        case "question.rejected":
+          // Question was answered/rejected - clear the pending question
+          await this.onQuestionResolved(event as any);
           break;
       }
     } catch (err) {
@@ -159,6 +187,7 @@ export class StateTracker {
     event: Extract<Event, { type: "session.created" }>
   ): Promise<void> {
     const newSessionId = event.properties.info.id;
+    const sessionInfo = event.properties.info;
     
     // If switching sessions, notify HA to remove the old one
     if (this.currentSessionId && this.currentSessionId !== newSessionId) {
@@ -170,12 +199,14 @@ export class StateTracker {
     }
     
     this.currentSessionId = newSessionId;
-    this.state.sessionTitle = event.properties.info.title || "Untitled";
+    this.state.sessionTitle = sessionInfo.title || "Untitled";
     this.state.tokensInput = 0;
     this.state.tokensOutput = 0;
     this.state.cost = 0;
     this.state.state = "idle";
     this.state.previousState = null;
+    // Track parent session ID for sub-agent sessions
+    this.state.parentSessionId = (sessionInfo as { parentID?: string }).parentID || null;
     this.updateActivity();
 
     await this.publishUpdate();
@@ -254,8 +285,9 @@ export class StateTracker {
     let stateChanged = false;
 
     // When receiving text parts with deltas, the model is actively working
+    // BUT don't override waiting_permission state - that takes priority
     if (part.type === "text" && event.properties.delta) {
-      if (this.state.state !== "working") {
+      if (this.state.state !== "working" && this.state.state !== "waiting_permission") {
         await this.updateState("working");
         stateChanged = true;
       }
@@ -274,12 +306,33 @@ export class StateTracker {
 
       if (toolState.status === "running") {
         this.state.currentTool = part.tool;
-        if (this.state.state !== "working") {
+        // Don't override waiting_permission or waiting_input state - those take priority
+        if (this.state.state !== "working" && this.state.state !== "waiting_permission" && this.state.state !== "waiting_input") {
           await this.updateState("working");
           stateChanged = true;
         }
+        
+        // Notify if question tool started (caller should start polling)
+        // Note: The tool name might vary - check for common patterns
+        const toolName = part.tool?.toLowerCase() || "";
+        const isQuestionTool = toolName === "question" || toolName.includes("question");
+        
+        if (isQuestionTool) {
+          // Note: We don't set question here because we don't have the
+          // proper question request_id. The question.asked event will fire
+          // with the correct ID (qst_xxx format) that we need for reply API.
+        }
       } else if (toolState.status === "completed" || toolState.status === "error") {
         this.state.currentTool = "none";
+        
+        // Clear question if question tool completed/errored
+        if (part.tool === "question" && this.state.pendingQuestion) {
+          this.state.pendingQuestion = null;
+          if (this.state.state === "waiting_input") {
+            await this.updateState("working");
+            stateChanged = true;
+          }
+        }
       }
     }
 
@@ -292,24 +345,58 @@ export class StateTracker {
   }
 
   private async onPermissionUpdated(
-    event: Extract<Event, { type: "permission.updated" }>
+    event: Extract<Event, { type: "permission.updated" }> | { type: "permission.asked"; properties: any }
   ): Promise<void> {
-    const permission = event.properties as Permission;
-
-    // Pattern might be string | string[] from SDK, convert to string
-    const pattern = Array.isArray(permission.pattern) 
-      ? permission.pattern.join(", ") 
-      : permission.pattern;
+    const props = event.properties;
+    
+    // Detect v1 vs v2 format based on properties
+    // v1: has 'type', 'title', 'pattern', top-level messageID/callID
+    // v2: has 'permission', 'patterns' (array), nested tool.messageID/callID
+    const isV2 = "permission" in props && "patterns" in props;
+    
+    let permissionId: string;
+    let permissionType: string;
+    let permissionTitle: string;
+    let sessionId: string;
+    let messageId: string | undefined;
+    let callId: string | undefined;
+    let pattern: string | undefined;
+    let metadata: Record<string, unknown>;
+    
+    if (isV2) {
+      // v2 format (permission.asked)
+      permissionId = props.id;
+      permissionType = props.permission; // "bash", "edit", etc.
+      permissionTitle = props.permission; // v2 doesn't have title, use permission type
+      sessionId = props.sessionID;
+      messageId = props.tool?.messageID;
+      callId = props.tool?.callID;
+      pattern = Array.isArray(props.patterns) ? props.patterns.join(", ") : undefined;
+      metadata = props.metadata || {};
+    } else {
+      // v1 format (permission.updated)
+      const permission = props as Permission;
+      permissionId = permission.id;
+      permissionType = permission.type;
+      permissionTitle = permission.title;
+      sessionId = permission.sessionID;
+      messageId = permission.messageID;
+      callId = permission.callID;
+      pattern = Array.isArray(permission.pattern) 
+        ? permission.pattern.join(", ") 
+        : permission.pattern;
+      metadata = permission.metadata;
+    }
       
     this.pendingPermission = {
-      id: permission.id,
-      type: permission.type,
-      title: permission.title,
-      session_id: permission.sessionID,
-      message_id: permission.messageID,
-      call_id: permission.callID,
+      id: permissionId,
+      type: permissionType,
+      title: permissionTitle,
+      session_id: sessionId,
+      message_id: messageId,
+      call_id: callId,
       pattern,
-      metadata: permission.metadata,
+      metadata,
     };
 
     this.updateActivity();
@@ -326,9 +413,76 @@ export class StateTracker {
     await this.updateState("working");
   }
 
+  /**
+   * Handle question.asked event from OpenCode server.
+   * This captures the proper question request ID needed for replying.
+   */
+  private async onQuestionAsked(
+    event: { type: "question.asked"; properties: { id: string; sessionID: string; questions: any[]; tool?: { messageID: string; callID: string } } }
+  ): Promise<void> {
+    const props = event.properties;
+    
+    // Extract question data from the event
+    const questions: QuestionItem[] = (props.questions || []).map((q: any) => ({
+      question: q.question || "",
+      header: q.header || "",
+      multiple: q.multiple || false,
+      options: (q.options || []).map((opt: any) => ({
+        label: opt.label || "",
+        description: opt.description || "",
+      })),
+    }));
+    
+    const questionInfo: QuestionInfo = {
+      session_id: props.sessionID,
+      request_id: props.id, // This is the REAL question request ID (qst_xxx)
+      questions,
+    };
+    
+    await this.setQuestion(questionInfo);
+  }
+
+  /**
+   * Handle question.replied or question.rejected events.
+   * Clears the pending question state.
+   */
+  private async onQuestionResolved(
+    event: { type: "question.replied" | "question.rejected"; properties: { sessionID: string; requestID: string } }
+  ): Promise<void> {
+    // Only clear if it matches the pending question
+    if (this.state.pendingQuestion?.request_id === event.properties.requestID) {
+      await this.clearQuestion();
+    }
+  }
+
   async clearPermission(): Promise<void> {
     this.pendingPermission = null;
     await this.publishUpdate();
+  }
+
+  /**
+   * Set a pending question and transition to waiting_input state.
+   */
+  async setQuestion(question: QuestionInfo): Promise<void> {
+    this.state.pendingQuestion = question;
+    this.updateActivity();
+    await this.updateState("waiting_input");
+  }
+
+  /**
+   * Clear the pending question and transition back to working state.
+   */
+  async clearQuestion(): Promise<void> {
+    this.state.pendingQuestion = null;
+    this.updateActivity();
+    await this.updateState("working");
+  }
+
+  /**
+   * Check if currently waiting for input (question).
+   */
+  isWaitingForInput(): boolean {
+    return this.state.state === "waiting_input";
   }
 
   private updateActivity(): void {
