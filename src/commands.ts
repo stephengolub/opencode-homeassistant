@@ -134,6 +134,9 @@ export class CommandHandler {
     sessionId: string,
     command: PromptCommand
   ): Promise<void> {
+    const fs = require("fs");
+    fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] handlePrompt called: sessionId=${sessionId}, text="${command.text?.substring(0, 50)}"\n`);
+    
     if (!command.text || command.text.trim() === "") {
       notify("Prompt Error", "Empty prompt text");
       return;
@@ -141,6 +144,7 @@ export class CommandHandler {
 
     // Use provided session ID or fall back to current
     const targetSessionId = sessionId || this.state.getCurrentSessionId();
+    fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] targetSessionId=${targetSessionId}, currentSessionId=${this.state.getCurrentSessionId()}\n`);
 
     if (!targetSessionId) {
       notify("Prompt Error", "No active session");
@@ -156,15 +160,18 @@ export class CommandHandler {
     );
 
     try {
-      await this.client.session.prompt({
+      fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Calling client.session.prompt for session ${targetSessionId}\n`);
+      const result = await this.client.session.prompt({
         path: { id: targetSessionId },
         body: {
           agent: command.agent,
           parts: [{ type: "text", text: command.text }],
         },
       });
+      fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Prompt result: ${JSON.stringify(result)}\n`);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Unknown error";
+      fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Prompt error: ${errorMsg}\n`);
       notify("Prompt Failed", errorMsg);
     }
   }
