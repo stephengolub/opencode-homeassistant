@@ -138,7 +138,15 @@ export interface QuestionInfo {
 
 const RECONNECT_DELAY_MS = 5000;
 const AUTH_TIMEOUT_MS = 10000;
-const PING_INTERVAL_MS = 30000;
+// HA WebSocket has a default 90s inactivity timeout, so ping every 45s to stay well under
+const PING_INTERVAL_MS = 45000;
+const PONG_TIMEOUT_MS = 15000; // If no pong received within 15s, consider connection dead
+
+// Debug logging helper
+function debugLog(message: string): void {
+  const fs = require("fs");
+  fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] [WS] ${message}\n`);
+}
 
 export function createHAWebSocketClient(config: HAWebSocketConfig): HAWebSocketClient {
   let ws: WebSocket | null = null;
@@ -154,7 +162,9 @@ export function createHAWebSocketClient(config: HAWebSocketConfig): HAWebSocketC
   let stateRequestHandler: (() => void) | null = null;
   let disconnectHandler: (() => void) | null = null;
   let pingInterval: NodeJS.Timeout | null = null;
+  let pongTimeout: NodeJS.Timeout | null = null;
   let reconnecting = false;
+  let lastPongTime = 0;
   
   // Auth flow handlers
   let authResolve: (() => void) | null = null;
@@ -273,6 +283,11 @@ export function createHAWebSocketClient(config: HAWebSocketConfig): HAWebSocketC
 
       // Handle pong (keep-alive response)
       if (message.type === "pong") {
+        lastPongTime = Date.now();
+        if (pongTimeout) {
+          clearTimeout(pongTimeout);
+          pongTimeout = null;
+        }
         return;
       }
 
@@ -285,9 +300,22 @@ export function createHAWebSocketClient(config: HAWebSocketConfig): HAWebSocketC
     if (pingInterval) {
       clearInterval(pingInterval);
     }
+    lastPongTime = Date.now(); // Initialize
     pingInterval = setInterval(() => {
       if (ws && ws.readyState === WebSocket.OPEN && authenticated) {
         sendNoResponse({ type: "ping" });
+        
+        // Set up pong timeout - if no pong received, force reconnect
+        if (pongTimeout) {
+          clearTimeout(pongTimeout);
+        }
+        pongTimeout = setTimeout(() => {
+          debugLog(`Pong timeout - no response in ${PONG_TIMEOUT_MS}ms, forcing reconnect`);
+          // Force close the websocket to trigger reconnect
+          if (ws) {
+            ws.close();
+          }
+        }, PONG_TIMEOUT_MS);
       }
     }, PING_INTERVAL_MS);
   }
@@ -296,6 +324,10 @@ export function createHAWebSocketClient(config: HAWebSocketConfig): HAWebSocketC
     if (pingInterval) {
       clearInterval(pingInterval);
       pingInterval = null;
+    }
+    if (pongTimeout) {
+      clearTimeout(pongTimeout);
+      pongTimeout = null;
     }
   }
 
@@ -355,7 +387,8 @@ export function createHAWebSocketClient(config: HAWebSocketConfig): HAWebSocketC
           handleMessage(data.toString());
         });
 
-        ws.on("close", () => {
+        ws.on("close", (code, reason) => {
+          debugLog(`WebSocket closed: code=${code}, reason=${reason?.toString() || "none"}`);
           cleanup();
           if (disconnectHandler && !reconnecting) {
             disconnectHandler();
@@ -363,6 +396,7 @@ export function createHAWebSocketClient(config: HAWebSocketConfig): HAWebSocketC
         });
 
         ws.on("error", (err) => {
+          debugLog(`WebSocket error: ${err.message}`);
           // Only log if we're not in a reconnect loop
           if (!connected) {
             clearTimeout(connectTimeout);
@@ -551,17 +585,25 @@ export function createReconnectingClient(
   async function attemptReconnect(): Promise<void> {
     if (!shouldReconnect) return;
     
+    debugLog("Attempting reconnect...");
+    
     try {
       await client.connect();
+      debugLog("WebSocket connected, registering instance...");
+      
       const result = await client.reconnect(instanceToken, hostname);
       
       if (result.success) {
+        debugLog("Reconnect successful!");
         hasNotifiedDisconnect = false; // Reset for next disconnect
         cb.onReconnected();
       } else {
+        debugLog(`Reconnect failed: ${result.error || "Unknown error"}`);
         scheduleReconnect();
       }
-    } catch {
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : "Unknown error";
+      debugLog(`Reconnect error: ${errMsg}`);
       scheduleReconnect();
     }
   }
@@ -576,6 +618,7 @@ export function createReconnectingClient(
   }
 
   client.onDisconnect(() => {
+    debugLog("Disconnect detected, shouldReconnect=" + shouldReconnect);
     if (shouldReconnect) {
       // Only notify once per disconnect cycle
       if (!hasNotifiedDisconnect && cb.onDisconnected) {

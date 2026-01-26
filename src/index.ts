@@ -393,8 +393,21 @@ Current Session: ${currentSessionId || "None"}`;
         await connectPromise;
       }
 
+      // Sync connected state with actual WebSocket state
+      // This handles cases where the WS disconnected but our flag wasn't updated
+      if (wsClient && !wsClient.isConnected()) {
+        if (connected) {
+          fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Connection state mismatch - wsClient.isConnected()=false but connected=true, syncing...\n`);
+          connected = false;
+        }
+      }
+
       if (!wsClient || !connected || !haConfig) {
-        fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Event ${event.type}: skipped - not connected (wsClient=${!!wsClient}, connected=${connected}, haConfig=${!!haConfig})\n`);
+        // Only log occasionally to avoid spam (every 100th event or important events)
+        const importantEvents = ["session.created", "session.idle", "permission.asked", "question.asked"];
+        if (importantEvents.includes(event.type)) {
+          fs.appendFileSync("/tmp/ha-plugin-debug.log", `[${new Date().toISOString()}] Event ${event.type}: skipped - not connected (wsClient=${!!wsClient}, connected=${connected}, haConfig=${!!haConfig})\n`);
+        }
         return; // Not connected, skip event
       }
 
