@@ -14,7 +14,7 @@ import {
   buildWebSocketUrl,
   type HAConnectionConfig,
 } from "./ha-config.js";
-import { StateTracker } from "./state.js";
+import { StateTracker, hasValidTitle } from "./state.js";
 import { CommandHandler } from "./commands.js";
 import { notify } from "./notify.js";
 
@@ -384,8 +384,12 @@ Current Session: ${currentSessionId || "None"}`;
       const fs = require("fs");
       
       // Send notification when session becomes idle (task complete)
+      // Only notify for primary sessions with a real title — skip subagents and Untitled sessions
       if (event.type === "session.idle") {
-        notify("OpenCode", "Task complete");
+        const currentState = state?.getState();
+        if (currentState && !currentState.parentSessionId && hasValidTitle(currentState.sessionTitle)) {
+          notify("OpenCode", "Task complete");
+        }
       }
 
       // Wait for connection attempt on first event

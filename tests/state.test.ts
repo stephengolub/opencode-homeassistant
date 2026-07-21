@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { StateTracker } from "../src/state.js";
+import { StateTracker, hasValidTitle } from "../src/state.js";
 import type { HAWebSocketClient } from "../src/websocket.js";
 import type { Event } from "@opencode-ai/sdk";
 
@@ -443,5 +443,182 @@ describe("StateTracker", () => {
       expect(sessions[0].state).toBe("working");
       expect(sessions[0].previous_state).toBe("idle");
     });
+  });
+
+  describe("subagent session filtering", () => {
+    it("ignores session.created events for sessions with parentID", async () => {
+      const event: Event = {
+        type: "session.created",
+        properties: {
+          info: {
+            id: "ses_sub123",
+            title: "Subagent Task",
+            parentID: "ses_parent456",
+          },
+        },
+      } as unknown as Event;
+
+      await stateTracker.handleEvent(event);
+
+      // State should not have been published and session ID should remain null
+      expect(mockWsClient.sendSessionUpdate).not.toHaveBeenCalled();
+      expect(stateTracker.getCurrentSessionId()).toBeNull();
+    });
+
+    it("processes session.created events for sessions without parentID", async () => {
+      const event: Event = {
+        type: "session.created",
+        properties: {
+          info: {
+            id: "ses_main123",
+            title: "Main Session",
+          },
+        },
+      } as unknown as Event;
+
+      await stateTracker.handleEvent(event);
+
+      expect(stateTracker.getCurrentSessionId()).toBe("ses_main123");
+      expect(mockWsClient.sendSessionUpdate).toHaveBeenCalled();
+    });
+
+    it("ignores session.created even when parentID is explicitly undefined vs absent", async () => {
+      const event: Event = {
+        type: "session.created",
+        properties: {
+          info: {
+            id: "ses_main999",
+            title: "Another Main Session",
+            parentID: undefined,
+          },
+        },
+      } as unknown as Event;
+
+      await stateTracker.handleEvent(event);
+
+      // parentID undefined → not a subagent — should process
+      expect(stateTracker.getCurrentSessionId()).toBe("ses_main999");
+    });
+  });
+});
+
+describe("getState", () => {
+  let stateTracker: StateTracker;
+  let mockWsClient: HAWebSocketClient;
+
+  beforeEach(() => {
+    mockWsClient = {
+      sendSessionUpdate: vi.fn().mockResolvedValue(undefined),
+      sendSessionRemoved: vi.fn().mockResolvedValue(undefined),
+      sendStateResponse: vi.fn().mockResolvedValue(undefined),
+      isConnected: vi.fn().mockReturnValue(true),
+      onCommand: vi.fn(),
+      onStateRequest: vi.fn(),
+      onDisconnect: vi.fn(),
+      connect: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      pair: vi.fn().mockResolvedValue({ success: true }),
+      reconnect: vi.fn().mockResolvedValue({ success: true }),
+    } as unknown as HAWebSocketClient;
+
+    stateTracker = new StateTracker(mockWsClient, "test-token", "test-project");
+  });
+
+  it("returns the initial state with default values", () => {
+    const s = stateTracker.getState();
+    expect(s.state).toBe("idle");
+    expect(s.sessionTitle).toBe("Untitled");
+    expect(s.parentSessionId).toBeNull();
+  });
+
+  it("ignores session.created events for subagent sessions (parentID set)", async () => {
+    const event: Event = {
+      type: "session.created",
+      properties: {
+        info: {
+          id: "ses_sub456",
+          title: "Sub Session",
+          parentID: "ses_parent123",
+        },
+      },
+    } as unknown as Event;
+
+    await stateTracker.handleEvent(event);
+
+    // Event is ignored — state must be entirely unchanged
+    const s = stateTracker.getState();
+    expect(s.parentSessionId).toBeNull();
+    expect(mockWsClient.sendSessionUpdate).not.toHaveBeenCalled();
+    expect(mockWsClient.sendSessionRemoved).not.toHaveBeenCalled();
+  });
+
+  it("has null parentSessionId for a primary session", async () => {
+    const event: Event = {
+      type: "session.created",
+      properties: {
+        info: {
+          id: "ses_main789",
+          title: "Main Session",
+        },
+      },
+    } as unknown as Event;
+
+    await stateTracker.handleEvent(event);
+
+    const s = stateTracker.getState();
+    expect(s.parentSessionId).toBeNull();
+  });
+
+  it("reflects sessionTitle after a session.updated event", async () => {
+    await stateTracker.setSessionId("ses_123");
+
+    const event: Event = {
+      type: "session.updated",
+      properties: {
+        info: {
+          id: "ses_123",
+          title: "Real Title",
+        },
+      },
+    } as Event;
+
+    await stateTracker.handleEvent(event);
+
+    const s = stateTracker.getState();
+    expect(s.sessionTitle).toBe("Real Title");
+  });
+});
+
+describe("hasValidTitle", () => {
+  it("returns false for undefined", () => {
+    expect(hasValidTitle(undefined)).toBe(false);
+  });
+
+  it("returns false for null", () => {
+    expect(hasValidTitle(null)).toBe(false);
+  });
+
+  it("returns false for empty string", () => {
+    expect(hasValidTitle("")).toBe(false);
+  });
+
+  it("returns false for 'Untitled'", () => {
+    expect(hasValidTitle("Untitled")).toBe(false);
+  });
+
+  it("returns false for 'unknown'", () => {
+    expect(hasValidTitle("unknown")).toBe(false);
+  });
+
+  it("returns false for 'No active session'", () => {
+    expect(hasValidTitle("No active session")).toBe(false);
+  });
+
+  it("returns true for a real title", () => {
+    expect(hasValidTitle("My Project")).toBe(true);
+  });
+
+  it("returns true for a non-reserved title", () => {
+    expect(hasValidTitle("Implementing feature X")).toBe(true);
   });
 });

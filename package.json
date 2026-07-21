@@ -39,7 +39,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.1.27",
+    "@opencode-ai/plugin": "^1.18.4",
     "@types/node": "^22.0.0",
     "@types/source-map-support": "^0.5.10",
     "@types/ws": "^8.5.13",

@@ -2,9 +2,19 @@ import { hostname } from "os";
 import type { Event, Permission } from "@opencode-ai/sdk";
 import type { HAWebSocketClient, SessionUpdate, PermissionInfo, QuestionInfo, QuestionItem } from "./websocket.js";
 
+const INVALID_TITLES = new Set(["Untitled", "unknown", "No active session"]);
+
+/**
+ * Returns true only when `title` is a meaningful, user-visible session name.
+ * Rejects falsy values and reserved placeholder strings.
+ */
+export function hasValidTitle(title: string | undefined | null): boolean {
+  return !!title && !INVALID_TITLES.has(title);
+}
+
 type SessionState = "idle" | "working" | "waiting_permission" | "waiting_input" | "error";
 
-interface TrackedState {
+export interface TrackedState {
   state: SessionState;
   previousState: SessionState | null;
   sessionTitle: string;
@@ -129,6 +139,11 @@ export class StateTracker {
    * Get all current sessions for state response.
    * Currently we only track one session at a time.
    */
+  /** Returns a snapshot of the current tracked state. */
+  getState(): TrackedState {
+    return { ...this.state };
+  }
+
   getAllSessions(): SessionUpdate[] {
     if (!this.currentSessionId) {
       return [];
@@ -186,8 +201,15 @@ export class StateTracker {
   private async onSessionCreated(
     event: Extract<Event, { type: "session.created" }>
   ): Promise<void> {
-    const newSessionId = event.properties.info.id;
     const sessionInfo = event.properties.info;
+
+    // Subagent sessions have parentID set — skip them entirely so they don't
+    // appear as separate devices in Home Assistant.
+    if ((sessionInfo as { parentID?: string }).parentID) {
+      return;
+    }
+
+    const newSessionId = sessionInfo.id;
     
     // If switching sessions, notify HA to remove the old one
     if (this.currentSessionId && this.currentSessionId !== newSessionId) {
